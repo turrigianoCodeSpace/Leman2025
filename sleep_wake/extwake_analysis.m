@@ -1,0 +1,2911 @@
+%% extwake_analysis.m
+
+
+
+% Greatly edited by Brian Cary 2023/2024
+% TODO:
+
+
+
+
+
+
+%% SETUP
+% clear workspace
+% clearIDE
+
+% % load contcell variable
+% contcell_file = 'CONTCELL_recov.mat';
+% if ismac
+%     contcell_dir = '/Volumes/turrigiano-lab/ATP_MAIN/DATA/Dissertation_Data/ER2020/ER_Fig1';
+% elseif ispc
+%     contcell_dir = 'Z:\ATP_MAIN\DATA\Dissertation_Data\ER2020\ER_Fig1';
+% end
+% load([contcell_dir filesep contcell_file]);
+
+cd('Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode')
+% 
+filepath = "Z:\DPL\PROJECTS\StateCoding\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl.mat";
+
+% filepath = "Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\ContCell_MasterStrct_v3_DL78pred.mat";
+% 
+% 
+% filepath = "Z:\DPL\PROJECTS\StateCoding\STATEvsMOD\PosModStableBase_Hr66.mat";
+% filepath = "Z:\DPL\PROJECTS\StateCoding\STATEvsMOD\NegModStableBase_Hr66.mat";
+% filepath = "Z:\DPL\PROJECTS\StateCoding\STATEvsMOD\pFS\pFSStableBase_Hr66.mat";
+% filepath = "Z:\DPL\PROJECTS\StateCoding\STATEvsMOD\BestNeur\bestneurStableBase_Hr66.mat";
+
+sp_filepath = split(filepath,'\');
+sp_path2 = split(sp_filepath(end),'.mat');
+savename = [char(sp_path2{1}),'_extwake_WS_meant4.mat'];
+% savedata_dir = '\\files.brandeis.edu\turrigiano-lab\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\extwakesleep';
+savedata_dir = 'Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\extwakesleep';
+
+%% initialize vars + params
+
+savedata_path = [savedata_dir,filesep,savename];
+
+loadFile = load(filepath);
+
+loadFields = fieldnames(loadFile);
+loadFieldname = loadFields{1};
+
+MASTER = loadFile.(loadFieldname).MASTER;
+try
+    STATES = loadFile.(loadFieldname).STATETIMES;
+catch
+    STATES = loadFile.(loadFieldname).STATES;
+end
+DAYSTART = STATES.DAYSTART;
+anim_fields = fieldnames(STATES);
+anim_fields(strcmp(anim_fields,'DAYSTART')) = [];
+n_anims = numel(anim_fields); % minus daystart field
+
+cell_anims = {MASTER.animal};
+
+already_corrected = 0;
+
+% colors for plotting
+c_rem   = [25 181 149]./255;
+c_nrem  = [131 49 146]./255;
+c_aw    = [201 28 101]./255;
+c_qw    = [247 148 41]./255;
+
+% analysis flags
+save_delta_data = 0;
+use_periods = 0;
+plot_props_yes = 0;
+
+% period of interest
+% homeo_period_start = 0; % beginning of day4's dark period (night after hunting)
+% homeo_period_end = 3.1; % plus hour
+homeo_period_start = 3.5; % beginning of day4's dark period (night after hunting)
+homeo_period_end = 6.1; % 
+
+BL_period = [2.5,3];
+
+post_hunt_hr = 3.5*24;
+
+% cell selection parameters
+ontime_hr_YES = 1;
+
+G_bin = 1; % seconds. Bin size for FR calculations.
+
+% mean_t sets the normalizing mode:
+%   0 for no normalization
+%   1 for z-scoring to wake epoch (combined AW and QW this is why AW is
+%   stil higher)
+%   2 for z-scoring to all recorded times for this cell
+%   3 for fractional change
+%   4 for combination frac and z-score wake epoch
+%   5 use frac of episode like in 4, restrict to like state, but measure
+%   norm change like in 3
+%   6 use frac of episode like in 4, restrict to like state, measure %
+%   change
+mean_t = 6;
+
+% correlation type
+corr_type = 'Pearson';
+
+% analysis parameters
+dur_frac = 0.3; % only used if mean_t == 3,4,5,6
+% extended wake minimum duration
+ext_wake_time_thresh = 30; % minutes
+ext_wake_int_thresh = 120; % seconds. Max time for interrupting bouts
+
+min_FR_dur_frac = 0.05;
+max_FR_dur_frac_Delta = 6;
+max_FR_perc_Delta = 600;
+
+min_period_FR = 0.1;
+
+% new param to handle large changes in FR between states
+edge_buffer_sec = 75;
+
+% individual states duration thresholds
+interrupt_threshold = 10; % seconds - get rid of states shorter than this value
+duration_threshold = 30; % seconds - ignore states shorter than this (no FR calculation)
+
+% time start and end for main FR calculation
+t_start = 0;
+t_stop = 10*24*3600;
+
+% animal list selection
+% anim_list = {'BL65','BL69','DL44','DL79','DL97'};
+anim_list = anim_fields;
+
+disp('Bypassing the original get_RSUs function!')
+
+% correct on/off time units to seconds
+if ontime_hr_YES && ~already_corrected
+    for i = 1:length(MASTER)
+        MASTER(i).onTime = MASTER(i).onTime*3600;
+        MASTER(i).offTime = MASTER(i).offTime*3600;
+    end
+
+    already_corrected = 1;
+end
+
+%% Loop through animals and find extended wake periods
+
+for aa = 1:n_anims
+    animal = anim_fields{aa};
+    
+    statetimes = STATES.(animal);
+    
+    % remove repeats
+    st_diff = diff(statetimes(:,1));
+    kill_these = find(st_diff==0);
+    statetimes(kill_these+1,:) = [];
+    
+    % remove short states
+    st_timediff = diff(statetimes(:,2));
+    too_short = find(st_timediff <= interrupt_threshold);
+    statetimes(too_short,:) = [];
+    
+    % remove repeats again
+    st_diff = diff(statetimes(:,1));
+    kill_these = find(st_diff==0);
+    statetimes(kill_these+1,:) = [];
+    
+    % FIND EXTENDED WAKE
+    ext_wakes = find_extended_wake(statetimes,ext_wake_time_thresh,ext_wake_int_thresh);
+    
+    wake_props = [];
+    for e_i = 1:size(ext_wakes,1)
+        e_states = statetimes(ext_wakes(e_i,1):ext_wakes(e_i,2),:);
+        e_dur = e_states(end,2) - e_states(1,2);
+        
+        try
+            sleep_inds = find(e_states(:,1) < 3);
+            sleep_durs = e_states(sleep_inds+1,2) - e_states(sleep_inds,2);
+    
+            wake_props(e_i) = (e_dur - sum(sleep_durs)) / e_dur;
+        catch
+            wake_props(e_i) = NaN;
+        end
+
+    end
+
+    if plot_props_yes == 1
+        figure;
+        hist(wake_props,0:0.05:1);
+        ylabel('count')
+        xlabel('Wake proportions')
+        title(['Ext. wake - wake props -- anim: ',animal])
+        box off
+    end
+
+    all_extwakes{aa} = ext_wakes;
+    
+    expstart_raw = unixtime(statetimes(1,2));
+    expstart_unix = [expstart_raw(1:3) 7 30 0];
+    expstart_t = unixtime(expstart_unix);
+    
+    all_expstart{aa} = expstart_t;
+    
+    clear  ext_wakes expstart* statetimes
+end
+
+all_AW_zFR = [];
+all_AW_offT = [];
+all_QW_zFR = [];
+all_QW_offT = [];
+all_BL_cell_FR_QW = [];
+all_BL_cell_FR_AW = [];
+
+
+%% Loop thru animals for FR analysis
+% this is the same as in the extwake_analysis script
+loop_plot_on = 0;
+
+do_perc = 0;
+all_cell_full_FR = [];
+for aa = 1:n_anims
+    animal = anim_fields{aa};
+    fprintf('Animal %s.\n',animal);
+    
+    if any(strcmp(anim_list,animal))
+
+        if use_periods
+            homeo_start = rec_periods{aa}(1)*24*3600;
+            homeo_end = rec_periods{aa}(2)*24*3600;
+        else
+            homeo_start = homeo_period_start*24*3600;
+            homeo_end = homeo_period_end*24*3600;
+        end
+
+        anim_rsu_idx = find(strcmp(cell_anims,animal));
+        
+        anim_cells = MASTER(anim_rsu_idx);
+        rsu = MASTER(anim_rsu_idx);
+%         rsu = get_RSUs(anim_cells,qthresh,dep,perc_thresh,norm,bl_on,dataset,...
+%             plot_cellsep,negpos,tailslope,0);
+        n_RSU = size(rsu,2);
+        
+        anim_idx = find(strcmp(anim_fields,animal));
+        
+        % RETRIEVE STATE DATA
+        
+        ext_wakes = all_extwakes{anim_idx};
+        expstart_t = all_expstart{anim_idx};
+        
+        statetimes = STATES.(animal);
+        trem = anim_cells(1).trem;
+
+        % remove repeats
+        st_diff = diff(statetimes(:,1));
+        kill_these = find(st_diff==0);
+        statetimes(kill_these+1,:) = [];
+        
+        % remove short states
+        st_timediff = diff(statetimes(:,2));
+        too_short = find(st_timediff <= interrupt_threshold);
+        statetimes(too_short,:) = [];
+        
+        % remove repeats again
+        st_diff = diff(statetimes(:,1));
+        kill_these = find(st_diff==0);
+        statetimes(kill_these+1,:) = [];
+        
+        daystart = DAYSTART.(animal);
+        
+        n_wakes = size(ext_wakes,1);
+        
+        all_wake_dur{anim_idx} = nan(n_wakes, n_RSU);
+        wake_starts{anim_idx} = nan(n_wakes, n_RSU);
+        deltaFR_AW{anim_idx} = nan(n_wakes,n_RSU);
+        deltaFR_QW{anim_idx} = nan(n_wakes,n_RSU);
+        all_BL_cell_FR_QW{anim_idx} = nan(n_wakes, n_RSU);
+
+        for tt = 1:n_wakes
+            
+            fprintf('Extended wake epoch %u of %u.\n',tt,n_wakes);
+            
+            st_wake = statetimes(ext_wakes(tt,1):ext_wakes(tt,2)+1,:);
+            
+            st_wake(:,2) = st_wake(:,2) - expstart_t + daystart*24*3600;
+
+            if st_wake(end,1) > 3 % last is wake, this might happen at edges
+                disp('last state not sleep, should be edge case')
+                disp('skipping...')
+                
+                continue
+            end
+            
+            try
+                wake_durs = diff(st_wake(:,2));
+                total_dur = sum(wake_durs);
+                
+                aw_idx = find(st_wake(:,1) == 4);
+                if ~isempty(aw_idx)
+                    if aw_idx(end) > size(wake_durs,1)
+                        aw_idx(end) = [];
+                    end
+                    aw_dur = sum(wake_durs(aw_idx));
+                    aw_percent = 100 * (aw_dur/total_dur);
+                end
+                
+                qw_idx = find(st_wake(:,1) == 5);
+                if ~isempty(qw_idx)
+                    if qw_idx(end) > size(wake_durs,1)
+                        qw_idx(end) = [];
+                    end
+                    qw_dur = sum(wake_durs(qw_idx));
+                    qwpercent = 100 * (qw_dur/total_dur);
+                end
+            catch
+                keyboard;
+            end
+            
+            wake_start = st_wake(1,2);
+            wake_end = st_wake(end,2);
+            ext_wake_duration = wake_end - wake_start;
+            
+            if wake_start >= homeo_start && wake_end <= homeo_end
+                fprintf('good\n');
+                %keyboard
+                AW_idx = find(st_wake(:,1) == 4);
+                n_AW = numel(AW_idx);
+                QW_idx = find(st_wake(:,1) == 5);
+                n_QW = numel(QW_idx);
+                
+                if n_AW > 0
+                    idx_AW_first = AW_idx(1);
+                    idx_AW_last = AW_idx(end);
+                end
+                
+                idx_QW_first = QW_idx(1);
+                idx_QW_last = QW_idx(end);
+                
+                all_AW_zFR{anim_idx,tt} = nan(n_RSU, n_AW);
+                all_AW_offT{anim_idx,tt} = nan(n_RSU, n_AW);    
+                all_QW_zFR{anim_idx,tt} = nan(n_RSU, n_QW);
+                all_QW_offT{anim_idx,tt} = nan(n_RSU, n_QW); 
+                all_BL_cell_FR_QW{anim_idx,tt} = nan(n_RSU, n_QW);
+                all_BL_cell_FR_AW{anim_idx,tt} = nan(n_RSU, n_AW);                
+
+                for cc = 1:n_RSU
+                    spikes = rsu(cc).time;
+                    onTimes = rsu(cc).onTime + daystart*24*3600;
+                    offTimes = rsu(cc).offTime + daystart*24*3600;
+
+                    if length(onTimes) > 1
+                        fprintf('Multiple on/off times.\n');
+%                         keyboard;
+                    end
+
+                    switch mean_t
+                        case 0
+                            do_z = 0;
+                            delta_frac = 0;
+                        case 1
+                            mean_long_t0 = wake_start;
+                            mean_long_t1 = wake_end;
+                            do_z = 1;
+                            delta_frac = 0;
+                        case 2
+                            mean_long_t0 = onTimes(1);
+                            mean_long_t1 = offTimes(end);
+                            do_z = 1;
+                            delta_frac = 0;
+                        case 3
+                            mean_long_t0 = wake_start;
+                            mean_long_t1 = wake_end;
+                            do_z = 0;
+                            delta_frac = 1;
+                        case 4
+                            mean_long_t0 = wake_start;
+                            mean_long_t1 = wake_end;
+                            do_z = 1;
+                            delta_frac = 1;           
+                        case 5
+                            mean_long_t0 = wake_start;
+                            mean_long_t1 = wake_end;
+                            do_z = 0;
+                            delta_frac = 1;
+                        case 6
+                            mean_long_t0 = wake_start;
+                            mean_long_t1 = wake_end;
+                            do_z = 0;
+                            do_perc = 1;
+                            delta_frac = 1;                            
+                    end
+                    
+                    all_sp_times = spikes + daystart*24*3600;
+                    cell_sp_times = [];
+                    num_ontimes = length(onTimes);
+                    for ii = 1:num_ontimes
+                        add_sps = all_sp_times(all_sp_times > onTimes(ii)...
+                            & all_sp_times < offTimes(ii));
+                        cell_sp_times = [cell_sp_times; add_sps];
+                    end       
+%                     cell_sp_times = cell_sp_times + daystart*24*3600;
+% 
+%                     onTimes = onTimes + daystart*24*3600;
+%                     offTimes = offTimes + daystart*24*3600;
+                    rate_onoff = histc(cell_sp_times,t_start:G_bin:t_stop) ./ G_bin;
+%                     all_cell_full_FR(end+1,:) = rate_onoff;
+                    
+                    BL_start = BL_period(1)*24*3600;
+                    BL_end = BL_period(2)*24*3600;
+                    BL_sp_times = all_sp_times(all_sp_times > BL_start & all_sp_times < BL_end);
+                    BL_cell_FR = 1/nanmean(diff(BL_sp_times));
+%                     all_BL_cell_FR{anim_idx}(tt,cc) = BL_cell_FR;
+%                     rate_tmp = histc(spikes,t_start:G_bin:t_stop) ./ G_bin;
+                    
+%                     tlist = [rsu(cc).onTime rsu(cc).offTime];
+%                     rate_onoff = processOnOffTimes_ATP(rate_tmp,tlist,G_bin,0,'recov',0);
+                    
+                    rate_long = rate_onoff(round(mean_long_t0/G_bin):round(mean_long_t1/G_bin));
+                    
+                    % apply edge buffer to prevent transition measurements
+                    num_edge_bins = round(edge_buffer_sec/G_bin);
+                    if num_edge_bins > 0
+                        rate_long(1:num_edge_bins) = NaN;
+                        rate_long(end-num_edge_bins) = NaN;
+                    end
+
+                    frmean_long = nanmean(rate_long);
+                    frstd_long  = std(rate_long,0,'omitnan');
+
+                    if frmean_long < min_period_FR
+                        continue
+                    end
+                    
+                    % cycle thru AW epochs and find mean FR in each
+                    if n_AW > 0
+                        for aw = 1:n_AW
+                            
+                            AW_t0 = st_wake(AW_idx(aw),2);
+                            AW_t1 = st_wake(AW_idx(aw)+1,2);
+
+                            % find if epoch in an on time
+                            on_yes = 0;
+                            for t = 1:length(onTimes)
+                                if AW_t0 >=  onTimes(t) && AW_t1 <= offTimes(t) && (AW_t1-AW_t0 >= duration_threshold)
+                                    on_yes = 1;
+                                end
+                            end
+                            
+                            if on_yes
+                                AW_idx0 = floor( (AW_t0-mean_long_t0) / G_bin );
+                                if AW_idx0 == 0, AW_idx0 = 1; end
+                                AW_idx1 = ceil( (AW_t1-mean_long_t0) / G_bin );         
+    
+                                num_nonnan = sum(~isnan(rate_long(AW_idx0:AW_idx1)));
+                                on_sec = round(num_nonnan/G_bin);     
+                                if on_sec < duration_threshold
+                                    on_yes = 0;
+                                end
+                            end
+
+                            if on_yes
+                               
+                                AW_FR = nanmean(rate_long(AW_idx0:AW_idx1));
+                                if do_z
+                                    AW_zFR = (AW_FR - frmean_long) / frstd_long;
+                                else
+                                    AW_zFR = AW_FR;
+                                end
+                            else
+                                AW_zFR = NaN;
+                            end
+                            
+                            all_AW_zFR{anim_idx,tt}(cc,aw) = AW_zFR;
+                            all_AW_offT{anim_idx,tt}(cc,aw) = AW_t0 - wake_start;
+
+                            all_BL_cell_FR_AW{anim_idx,tt}(cc,aw) = BL_cell_FR;
+                        end
+                    end
+                    % cycle thru QW epochs and find mean FR in each
+                    for qw = 1:n_QW
+                        
+                        QW_t0 = st_wake(QW_idx(qw),2);
+                        QW_t1 = st_wake(QW_idx(qw)+1,2);
+
+                        % find if epoch in an on time
+                        on_yes = 0;
+                        for t = 1:length(onTimes)
+                            if QW_t0 >=  onTimes(t) && QW_t1 <= offTimes(t) && (QW_t1-QW_t0 >= duration_threshold)
+                                on_yes = 1;
+                            end
+                        end
+                        
+                        if on_yes
+                            QW_idx0 = floor( (QW_t0-mean_long_t0) / G_bin );
+                            if QW_idx0 == 0, QW_idx0 = 1; end
+                            QW_idx1 = ceil( (QW_t1-mean_long_t0) / G_bin );      
+    
+                            num_nonnan = sum(~isnan(rate_long(QW_idx0:QW_idx1)));
+                            on_sec = round(num_nonnan/G_bin);     
+                            if on_sec < duration_threshold
+                                on_yes = 0;
+                            end
+                        end
+
+                        if on_yes
+                            
+                            QW_FR = nanmean(rate_long(QW_idx0:QW_idx1));
+                            if do_z
+                                QW_zFR = (QW_FR - frmean_long) / frstd_long;
+                            else
+                                QW_zFR = QW_FR;
+                            end
+                        else
+                            QW_zFR = NaN;
+                        end
+                        
+                        all_QW_zFR{anim_idx,tt}(cc,qw) = QW_zFR;
+                        all_QW_offT{anim_idx,tt}(cc,qw) = QW_t0 - wake_start;
+
+                        all_BL_cell_FR_QW{anim_idx,tt}(cc,qw) = BL_cell_FR;
+                    end
+                    
+                    if n_AW > 0
+                        if delta_frac ~= 1
+                            AW_first_t0 = st_wake(idx_AW_first,2);
+                            AW_first_t1 = st_wake(idx_AW_first+1,2);
+                            AW_last_t0 = st_wake(idx_AW_last,2);
+                            AW_last_t1 = st_wake(idx_AW_last+1,2);
+                            
+                            AW_dur_first = AW_first_t1 - AW_first_t0;
+                            AW_dur_last = AW_last_t1 - AW_last_t0;
+                        else
+                            wake_dur_frac = dur_frac * ext_wake_duration;
+                            AW_first_t0 = st_wake(1,2);
+                            AW_first_t1 = AW_first_t0 + wake_dur_frac;
+                            AW_last_t1 = st_wake(end,2);
+                            AW_last_t0 = AW_last_t1 - wake_dur_frac;
+                        end
+                        
+                        % find if epoch in an on time
+                        on_yes = 0;
+                        if delta_frac ~= 1
+                            for t = 1:length(onTimes)
+                                if AW_first_t0 >=  onTimes(t) && AW_last_t1 <= offTimes(t) && ...
+                                            AW_dur_first >= duration_threshold && AW_dur_last >= duration_threshold
+                                    on_yes = 1;
+                                end
+                            end
+                        else
+                            for t = 1:length(onTimes)
+                                if AW_first_t0 >=  onTimes(t) && AW_last_t1 <= offTimes(t)
+                                    on_yes = 1;
+                                end
+                            end
+                        end
+
+                        if on_yes
+                            
+                            switch mean_t
+                                case {1,2,3}
+                                    AW_first_idx0 = floor( (AW_first_t0-mean_long_t0) / G_bin );
+                                    if AW_first_idx0 == 0, AW_first_idx0 = 1; end
+                                    AW_first_idx1 = ceil( (AW_first_t1-mean_long_t0) / G_bin );
+                                    
+                                    AW_last_idx0 = floor( (AW_last_t0-mean_long_t0) / G_bin );
+                                    AW_last_idx1 = ceil( (AW_last_t1-mean_long_t0) / G_bin );
+                                    
+                                    AW_first_FR = nanmean(rate_long(AW_first_idx0:AW_first_idx1));
+                                    AW_last_FR = nanmean(rate_long(AW_last_idx0:AW_last_idx1));
+                                otherwise
+                                    AW_first_inds = [];
+                                    AW_last_inds = [];
+                                    for a_i = 1:n_AW
+                                        a_i_first = st_wake(AW_idx(a_i),2);
+                                        a_i_last = st_wake(AW_idx(a_i)+1,2);
+                                        if (a_i_first <= (mean_long_t0 + wake_dur_frac))
+                                            AW_first_idx0 = floor( (a_i_first-mean_long_t0) / G_bin );
+                                            if AW_first_idx0 == 0, AW_first_idx0 = 1; end
+                                            AW_first_idx1 = ceil( (a_i_last-mean_long_t0) / G_bin );
+                                            AW_first_inds = [AW_first_inds, AW_first_idx0:AW_first_idx1];
+                                        end
+                                        if (a_i_last >= (mean_long_t1 - wake_dur_frac))
+                                            AW_last_idx0 = floor( (a_i_first-mean_long_t0) / G_bin );
+                                            AW_last_idx1 = ceil( (a_i_last-mean_long_t0) / G_bin );
+                                            AW_last_inds = [AW_last_inds, AW_last_idx0:AW_last_idx1];
+                                        end
+                                    end
+        
+                                    AW_first_inds(AW_first_inds > round(wake_dur_frac/G_bin)) = [];
+                                    AW_last_inds(AW_last_inds < round((length(rate_long) - wake_dur_frac)/G_bin)) = [];
+                                    
+                                    if ((length(AW_first_inds)/G_bin) > duration_threshold) && ...
+                                                    ((length(AW_last_inds)/G_bin) > duration_threshold)
+                                        AW_first_FR = nanmean(rate_long(AW_first_inds));
+                                        AW_last_FR = nanmean(rate_long(AW_last_inds));                                
+                                    else
+                                        AW_first_FR = NaN;
+                                        AW_last_FR = NaN;
+                                    end
+
+                            end
+
+                            if do_z
+                                AW_first_zFR = (AW_first_FR - frmean_long) / frstd_long;
+                                AW_last_zFR = (AW_last_FR - frmean_long) / frstd_long;
+                            else
+                                AW_first_zFR = AW_first_FR;
+                                AW_last_zFR = AW_last_FR;
+                            end
+                            
+                            if delta_frac == 1 && (mean_t == 3 || mean_t == 5)
+                                AW_delta_zFR = AW_last_zFR / (AW_first_zFR);
+                                if AW_delta_zFR == Inf || AW_delta_zFR == 0
+                                    AW_delta_zFR = NaN;
+                                end
+                            elseif do_perc
+                                AW_delta_zFR = 100*(AW_last_FR - AW_first_zFR) / AW_first_zFR;
+                            else
+                                AW_delta_zFR = AW_last_zFR - AW_first_zFR;
+                            end
+                        else
+                            AW_delta_zFR = NaN;
+                        end
+                        deltaFR_AW{anim_idx}(tt,cc) = AW_delta_zFR;
+                    end
+                    all_wake_dur{anim_idx}(tt,cc) = ext_wake_duration;
+                    wake_starts{anim_idx}(tt,cc) = wake_start;
+                    
+                    % find difference in FR between last and first QW
+                    if delta_frac ~= 1
+                        QW_first_t0 = st_wake(idx_QW_first,2);
+                        QW_first_t1 = st_wake(idx_QW_first+1,2);
+                        QW_last_t0 = st_wake(idx_QW_last,2);
+                        QW_last_t1 = st_wake(idx_QW_last+1,2);
+
+                        QW_dur_first = QW_first_t1 - QW_first_t0;
+                        QW_dur_last = QW_last_t1 - QW_last_t0;
+                        
+                    else
+                        wake_dur_frac = dur_frac * ext_wake_duration;
+                        QW_first_t0 = st_wake(1,2);
+                        QW_first_t1 = QW_first_t0 + wake_dur_frac;
+                        QW_last_t1 = st_wake(end,2);
+                        QW_last_t0 = QW_last_t1 - wake_dur_frac;
+                    end
+                    
+                    % find if epoch in an on time
+                    on_yes = 0;
+                    if delta_frac ~= 1
+                        for t = 1:length(onTimes)
+                            if QW_first_t0 >=  onTimes(t) && QW_last_t1 <= offTimes(t) && ...
+                                        QW_dur_first >= duration_threshold && QW_dur_last >= duration_threshold
+                                on_yes = 1;
+                            end
+                        end
+                    else
+                        for t = 1:length(onTimes)
+                            if QW_first_t0 >=  onTimes(t) && QW_last_t1 <= offTimes(t)
+                                on_yes = 1;
+                            end
+                        end
+                    end
+
+                    if on_yes
+                        switch mean_t
+                            case {1,2,3}
+                                QW_first_idx0 = floor( (QW_first_t0-mean_long_t0) / G_bin );
+                                if QW_first_idx0 == 0, QW_first_idx0 = 1; end
+                                QW_first_idx1 = ceil( (QW_first_t1-mean_long_t0) / G_bin );
+                                
+                                QW_last_idx0 = floor( (QW_last_t0-mean_long_t0) / G_bin );
+                                QW_last_idx1 = ceil( (QW_last_t1-mean_long_t0) / G_bin );
+                            
+                                QW_first_FR = nanmean(rate_long(QW_first_idx0:QW_first_idx1));
+                                QW_last_FR = nanmean(rate_long(QW_last_idx0:QW_last_idx1));
+                            otherwise
+                                QW_first_inds = [];
+                                QW_last_inds = [];
+                                for q_i = 1:n_QW
+                                    q_i_first = st_wake(QW_idx(q_i),2);
+                                    q_i_last = st_wake(QW_idx(q_i)+1,2);
+                                    if (q_i_first <= (mean_long_t0 + wake_dur_frac))
+                                        QW_first_idx0 = floor( (q_i_first-mean_long_t0) / G_bin );
+                                        if QW_first_idx0 == 0, QW_first_idx0 = 1; end
+                                        QW_first_idx1 = ceil( (q_i_last-mean_long_t0) / G_bin );
+                                        QW_first_inds = [QW_first_inds, QW_first_idx0:QW_first_idx1];
+                                    end
+                                    if (q_i_last >= (mean_long_t1 - wake_dur_frac))
+                                        QW_last_idx0 = floor( (q_i_first-mean_long_t0) / G_bin );
+                                        QW_last_idx1 = ceil( (q_i_last-mean_long_t0) / G_bin );
+                                        QW_last_inds = [QW_last_inds, QW_last_idx0:QW_last_idx1];
+                                    end
+                                end
+                                
+                                QW_first_inds(QW_first_inds > round(wake_dur_frac/G_bin)) = [];
+                                QW_last_inds(QW_last_inds < round((length(rate_long) - wake_dur_frac)/G_bin)) = [];
+    
+                                if ((length(QW_first_inds)/G_bin) > duration_threshold) && ...
+                                                ((length(QW_last_inds)/G_bin) > duration_threshold)
+                                    QW_first_FR = nanmean(rate_long(QW_first_inds));
+                                    QW_last_FR = nanmean(rate_long(QW_last_inds));                                
+                                else
+                                    QW_first_FR = NaN;
+                                    QW_last_FR = NaN;
+                                end
+    
+                                if cc > 0 
+                                    if loop_plot_on == 1
+                                        figure; hold on;
+                                        plot(rate_long,'color',[0.5 0.5 0.5])
+    
+    %                                     first_inds = 1:max([AW_first_inds,QW_first_inds]);
+    %                                     last_inds = 1:max([AW_last_inds,QW_last_inds]);
+    % 
+    %                                     aw_f_inds = nan([1,length(first_inds)]);
+    %                                     aw_f_inds(AW_first_inds) = AW_first_inds;
+    
+                                        if n_AW > 0
+                                            plot(AW_first_inds,rate_long(AW_first_inds),'color',c_aw)
+                                            plot(AW_last_inds,rate_long(AW_last_inds),'color',c_aw)
+                                        end
+                                        plot(QW_first_inds,rate_long(QW_first_inds),'color',c_qw)
+                                        plot(QW_last_inds,rate_long(QW_last_inds),'color',c_qw)      
+                                        plot([wake_dur_frac wake_dur_frac],[0,max(rate_long)],'k')
+                                        plot([length(rate_long) - wake_dur_frac length(rate_long) - wake_dur_frac],...
+                                            [0,max(rate_long)],'k')
+                                        ylabel('FR')
+
+                                        if do_z
+                                            QW_first_zFR = (QW_first_FR - frmean_long) / frstd_long;
+                                            QW_last_zFR = (QW_last_FR - frmean_long) / frstd_long;
+                                        else
+                                            QW_first_zFR = QW_first_FR;
+                                            QW_last_zFR = QW_last_FR;
+                                        end                                        
+                                        dFR_ex = QW_last_zFR / (QW_first_zFR);
+                                        title(['QW and AW FR - QW dFR=',num2str(dFR_ex),'  meanFR=',num2str(frmean_long)])
+                                        
+                                        waitforbuttonpress
+                                    end
+                                end
+                        end
+                        
+                        if do_z
+                            QW_first_zFR = (QW_first_FR - frmean_long) / frstd_long;
+                            QW_last_zFR = (QW_last_FR - frmean_long) / frstd_long;
+                        else
+                            QW_first_zFR = QW_first_FR;
+                            QW_last_zFR = QW_last_FR;
+                        end
+                        
+                        if delta_frac == 1 && (mean_t == 3 || mean_t == 5)
+                            QW_delta_zFR = QW_last_zFR / (QW_first_zFR);
+                            if QW_delta_zFR == Inf || QW_delta_zFR == 0
+                                QW_delta_zFR = NaN;
+                            end
+                        elseif do_perc
+                            QW_delta_zFR = 100*(QW_last_zFR - QW_first_zFR) / QW_first_zFR;                            
+                        else
+                            QW_delta_zFR = QW_last_zFR - QW_first_zFR;
+                        end
+                    else
+                        QW_delta_zFR = NaN;
+                    end
+                    deltaFR_QW{anim_idx}(tt,cc) = QW_delta_zFR;
+                end
+                
+                
+            else
+                fprintf('bad\n');
+                all_AW_zFR{anim_idx,tt} = NaN;
+                all_QW_zFR{anim_idx,tt} = NaN;
+                all_AW_offT{anim_idx,tt} = NaN;
+                all_QW_offT{anim_idx,tt} = NaN;
+                all_BL_cell_FR_QW{anim_idx,tt} = NaN;
+                all_BL_cell_FR_AW{anim_idx,tt} = NaN;
+            end
+        end
+
+        %%
+    end
+end
+
+% keyboard;
+%% deltaFR compile data
+
+QW_all_deltas = cellfun(@(x) x(:),deltaFR_QW,'UniformOutput',false);
+cat_QW_deltas = cat(1,QW_all_deltas{:});
+switch mean_t
+    case {1,2,4}
+        % different treshold?
+    case {3,5}
+        cat_QW_deltas(cat_QW_deltas > max_FR_dur_frac_Delta) = NaN; % check effect of this
+    case {6}
+        cat_QW_deltas(cat_QW_deltas > max_FR_perc_Delta) = NaN; % check effect of this
+end
+
+delta_nonans_QW = ~isnan(cat_QW_deltas);
+QW_delta_nonan = cat_QW_deltas(delta_nonans_QW);
+QW_delta_nonan(QW_delta_nonan==Inf) = NaN;
+
+for aa = 1:length(QW_all_deltas)
+    animal = anim_fields{aa};
+    anim_ds = QW_all_deltas{aa};
+%     anim_ds(anim_ds > max_FR_dur_frac_Delta) = NaN;
+%     QW_full_vec = [QW_full_vec; anim_ds];
+    mean_d = nanmean(anim_ds);
+    disp(['Anim=',animal,' mean QWdelta=',num2str(mean_d)])
+end
+
+figure;
+hist(QW_delta_nonan,50)
+title('QW delta hist')
+
+AW_all_deltas = cellfun(@(x) x(:),deltaFR_AW,'UniformOutput',false);
+cat_AW_deltas = cat(1,AW_all_deltas{:});
+switch mean_t
+    case {1,2,4}
+        % different treshold?
+    case {3,5}
+        cat_AW_deltas(cat_AW_deltas > max_FR_dur_frac_Delta) = NaN;
+    case {6}
+        cat_AW_deltas(cat_AW_deltas > max_FR_perc_Delta) = NaN; % check effect of this
+end
+
+delta_nonans_AW = ~isnan(cat_AW_deltas);
+AW_delta_nonan = cat_AW_deltas(delta_nonans_AW);
+AW_delta_nonan(AW_delta_nonan==Inf) = NaN;
+
+for aa = 1:length(AW_all_deltas)
+    animal = anim_fields{aa};
+    anim_ds = AW_all_deltas{aa};
+%     anim_ds(anim_ds > max_FR_dur_frac_Delta) = NaN;
+    mean_d = nanmean(anim_ds);
+    disp(['Anim=',animal,' mean AWdelta=',num2str(mean_d)])
+end
+
+figure;
+hist(AW_delta_nonan,100)
+title('AW delta hist')
+
+all_wake_dur_cellcat = cellfun(@(x) x(:),all_wake_dur,'UniformOutput',false);
+cat_wake_dur = cat(1,all_wake_dur_cellcat{:});
+wakedur_nonan_AW = cat_wake_dur(delta_nonans_AW);
+wakedur_nonan_QW = cat_wake_dur(delta_nonans_QW);
+
+all_BL_FR_cellcat = cellfun(@(x) x(:),all_BL_cell_FR_QW,'UniformOutput',false);
+cat_BL_FR = cat(1,all_BL_FR_cellcat{:});
+BL_cell_FR_nonan_AW = cat_BL_FR(delta_nonans_AW);
+BL_cell_FR_nonan_QW = cat_BL_FR(delta_nonans_QW);
+
+wake_start_cellcat = cellfun(@(x) x(:),wake_starts,'UniformOutput',false);
+cat_wake_starts = cat(1,wake_start_cellcat{:});
+wake_starts_nonan_AW = cat_wake_starts(delta_nonans_AW);
+wake_starts_nonan_QW = cat_wake_starts(delta_nonans_QW);
+
+wakedur_bycell = cellfun(@(x) nanmean(x,2),all_wake_dur,'UniformOutput',false);
+wakedur_bycell_cat = cat(1,wakedur_bycell{:});
+
+AW_cellcat = cellfun(@(x) nanmean(x,2),deltaFR_AW,'UniformOutput',false);
+AW_cellcat_sem = cellfun(@(x) nanstd(x,[],2) ./ sqrt(sum(~isnan(x),2)),deltaFR_AW,'UniformOutput',false);
+AW_cellmean = cat(1,AW_cellcat{:});
+AW_cellsem = cat(1,AW_cellcat_sem{:});
+AW_all_deltaFR = AW_cellmean(~isnan(AW_cellmean));
+AW_all_deltaSEM = AW_cellsem(~isnan(AW_cellmean));
+n_epochs_AW = sum(~isnan(AW_cellmean));
+
+QW_cellcat = cellfun(@(x) nanmean(x,2),deltaFR_QW,'UniformOutput',false);
+QW_cellcat_sem = cellfun(@(x) nanstd(x,[],2) ./ sqrt(sum(~isnan(x),2)),deltaFR_QW,'UniformOutput',false);
+QW_cellmean = cat(1,QW_cellcat{:});
+QW_cellsem = cat(1,QW_cellcat_sem{:});
+QW_all_deltaFR = QW_cellmean(~isnan(QW_cellmean));
+QW_all_deltaSEM = QW_cellsem(~isnan(QW_cellmean));
+wakedur_bycell_nonan = wakedur_bycell_cat(~isnan(QW_cellmean));
+n_epochs_QW = sum(~isnan(QW_cellmean));
+
+AW_mean_c = nanmean(AW_cellmean);
+AW_sem_c = std(AW_cellmean,0,'omitnan') / sqrt(n_epochs_AW - 1);
+AW_mean = nanmean(AW_delta_nonan);
+AW_sem = std(AW_delta_nonan,0,'omitnan') / sqrt(sum(~isnan(AW_delta_nonan)) - 1);
+
+QW_mean_c = nanmean(QW_cellmean);
+QW_sem_c = std(QW_cellmean,0,'omitnan') / sqrt(n_epochs_QW - 1);
+QW_mean = nanmean(QW_delta_nonan);
+QW_sem = std(QW_delta_nonan,0,'omitnan') / sqrt(sum(~isnan(QW_delta_nonan)) - 1);
+
+%% DO PLOTTING
+switch mean_t
+    case {1,2,4}
+
+        %% Fig 5G - AW FR vs time correlation
+        cellcat_AW_offT = cellfun(@(x) x(:),all_AW_offT,'UniformOutput',false);
+        cellcat_AW_zFR = cellfun(@(x) x(:),all_AW_zFR,'UniformOutput',false);
+        
+        cat_AW_offT = cat(1,cellcat_AW_offT{:});
+        cat_AW_zFR = cat(1,cellcat_AW_zFR{:});
+        
+        fr_notnans = find(~isnan(cat_AW_zFR));
+        offT_notnans = find(~isnan(cat_AW_offT));
+        inds_notnans = intersect(fr_notnans,offT_notnans);
+        
+        AW_offT_nonan = cat_AW_offT(inds_notnans);
+        AW_zFR_nonan = cat_AW_zFR(inds_notnans);
+        
+        all_data = [AW_zFR_nonan AW_offT_nonan];
+        all_data_sort = sortrows(all_data,2);
+        
+        ngroups = 10;
+        group_split = round(linspace(0,numel(AW_offT_nonan),ngroups+1));
+        for uu = 1:ngroups
+            this_group = all_data_sort(group_split(uu)+1 : group_split(uu+1), 1);
+            group_means(uu) = nanmean(this_group);
+            group_sem(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+            group_means_offT(uu) = nanmean(all_data_sort(group_split(uu)+1 : group_split(uu+1), 2));
+        end
+        
+        [aw_rho,aw_p_rho] = corr(AW_zFR_nonan, AW_offT_nonan, 'Type', corr_type);
+        aw_asterisks = get_asterisks_from_pval(aw_p_rho);
+        aw_lincoeff = polyfit(AW_offT_nonan, AW_zFR_nonan, 1);
+
+        %% plotting
+        markersize = 4;
+        mylims = 1;
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .3 .8]);
+        subplot(2,1,1);
+    %     if dep
+        scatter(AW_offT_nonan,AW_zFR_nonan,markersize^2,c_aw,'s','filled');
+    %     else
+    %         scatter(AW_offT_nonan,AW_zFR_nonan,markersize^2,c_aw,'s');
+    %     end
+        hold on;
+        if mylims
+            xlims = [-500 11000];
+            ylims = [-2 2];
+            xl2 = [-250 10000];
+            yl2 = [-0.2 0.4];
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):10:xlims(end);
+        Y = aw_lincoeff(2) + aw_lincoeff(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+        set(gca,'xlim',xlims,'ylim',ylims);
+        ylabel('Firing rate (z)','fontsize',21);
+        title('Ext. Wake change in FR during AW - scatter','fontsize',18);
+        
+        subplot(2,1,2);
+    %     if dep
+            mfc = c_aw;
+    %     else
+    %         mfc = 'none';
+    %     end
+        errorbar(group_means_offT,group_means,group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+        hold on;
+        box off
+        plot(X,Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',aw_rho,aw_p_rho),'fontsize',16);
+        end
+        ylabel('Firing rate (z)','fontsize',21);
+        xlabel('Time from start of extended wake (s)','fontsize',20);
+        
+        %% QW
+        cellcat_QW_offT = cellfun(@(x) x(:),all_QW_offT,'UniformOutput',false);
+        cellcat_QW_zFR = cellfun(@(x) x(:),all_QW_zFR,'UniformOutput',false);
+        
+        cat_QW_offT = cat(1,cellcat_QW_offT{:});
+        cat_QW_zFR = cat(1,cellcat_QW_zFR{:});
+        
+        fr_notnans = find(~isnan(cat_QW_zFR));
+        offT_notnans = find(~isnan(cat_QW_offT));
+        inds_notnans = intersect(fr_notnans,offT_notnans);
+    
+        QW_offT_nonan = cat_QW_offT(inds_notnans);
+        QW_zFR_nonan = cat_QW_zFR(inds_notnans);
+        
+        QW_all_data = [QW_zFR_nonan QW_offT_nonan];
+        QW_all_data_sort = sortrows(QW_all_data,2);
+        
+        % ngroups = 5;
+        QW_group_split = round(linspace(0,numel(QW_offT_nonan),ngroups+1));
+        for uu = 1:ngroups
+            QW_this_group = QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 1);
+            QW_group_means(uu) = nanmean(QW_this_group);
+            QW_group_sem(uu) = std(QW_this_group,0,'omitnan') / sqrt(numel(QW_this_group)-1);
+            QW_group_means_offT(uu) = nanmean(QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 2));
+        end
+        
+        
+        
+        [qw_rho,qw_p_rho] = corr(QW_offT_nonan, QW_zFR_nonan, 'Type', corr_type);
+        qw_asterisks = get_asterisks_from_pval(qw_p_rho);
+        qw_lincoeff = polyfit(QW_offT_nonan, QW_zFR_nonan, 1);
+        
+        %% plotting
+        markersize = 4;
+        mylims = 1;
+        
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .3 .8]);
+        subplot(2,1,1);
+    %     if dep
+            scatter(QW_offT_nonan,QW_zFR_nonan,markersize^2,c_qw,'s','filled');
+    %     else
+    %         scatter(QW_offT_nonan,QW_zFR_nonan,markersize^2,c_qw,'s');
+    %     end
+        hold on;
+        if mylims
+            xlims = [-500 11000];
+            ylims = [-2 2];
+            xl2 = [-250 10000];
+            yl2 = [-0.2 0.4];
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):10:xlims(end);
+        Y = qw_lincoeff(2) + qw_lincoeff(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+        set(gca,'xlim',xlims,'ylim',ylims);
+        ylabel('Firing rate (z)','fontsize',21);
+        title('Ext. Wake change in FR during QW - scatter','fontsize',18);
+    
+    %     if dep
+            mfc = c_qw;
+    %     else
+    %         mfc = 'none';
+    %     end
+        subplot(2,1,2);
+        errorbar(QW_group_means_offT,QW_group_means,QW_group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'color',c_qw,'linewidth',1.5);
+        hold on;
+        box off;
+        plot(X,Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',qw_rho,qw_p_rho),'fontsize',16);
+        end
+        ylabel('Firing rate (z)','fontsize',21);
+        xlabel('Time from start of extended wake (s)','fontsize',20);
+        
+        %% Fig 5H - plotting the first-last change
+        mylims = 1;
+        
+        [~,p_aw] = ttest(AW_delta_nonan);
+        [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+        [~,p_qw] = ttest(QW_delta_nonan);
+        [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+        
+        dfig = figure();
+        set(dfig,'position',[.1 .2 .25 .4]);
+        box off
+        hold on;
+        bw = .3;
+        csz = 20;
+    %     if dep
+            mfc1 = c_aw;
+            mfc2 = c_qw;
+            ec1 = 'none';
+            ec2 = 'none';
+    %     else
+    %         mfc1 = 'none';
+    %         mfc2 = 'none';
+    %         ec1 = c_aw;
+    %         ec2 = c_qw;
+    %     end
+        
+        aw_bar = bar(1,AW_mean,bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+        aw_err = errorbar(1,AW_mean,AW_sem,'linestyle','none','capsize',csz,...
+            'color',c_aw,'linewidth',2);
+        qw_bar = bar(2,QW_mean,bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+        qw_err = errorbar(2,QW_mean,QW_sem,'linestyle','none','capsize',csz,...
+            'color',c_qw,'linewidth',2);
+        if mylims
+            xl = [.5 2.5];
+            yl = [-0.2 0.2];
+            yt = -0.2:.1:0.2;
+        else
+            xl = get(gca,'xlim');
+            yl = get(gca,'ylim');
+            yt = get(gca,'ytick');
+        end
+        text(.75,0.18,sprintf('p = %.4f',p_aw),'fontsize',16);
+        text(1.75,0.18,sprintf('p = %.4f',p_qw),'fontsize',16);
+        set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
+            'ytick',yt);
+        ylabel('Firing rate (z)','fontsize',22);
+        title('Ext. Wake delta FR by state','fontsize',18);
+        
+        
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        % ADDED FROM SLEEP ANALYSIS
+        %% CORRELATION BETWEEN DELTA FR AND CIRCADIAN TIME
+        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+        wake_starts_CIRC_AW = mod(wake_starts_nonan_AW./3600, 24);
+        wake_starts_CIRC_QW = mod(wake_starts_nonan_QW./3600, 24);
+        
+        wake_ends_CIRC_AW = wake_starts_CIRC_AW + wakedur_nonan_AW/3600;
+        wake_ends_CIRC_QW = wake_starts_CIRC_QW + wakedur_nonan_QW/3600;
+    
+        %% calculate light vs dark circ data bins
+        CIRC_AW_this_group = {};
+        CIRC_QW_this_group = {};
+        CIRC_AW_group_means = [];
+        CIRC_AW_group_sem = [];
+        CIRC_QW_group_means = [];
+        CIRC_QW_group_sem = [];
+        CIRC_group_means_offT = [];
+        
+        CIRC_group_split = 0 : 12 : 24;
+        ngroups = numel(CIRC_group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = CIRC_group_split(uu);
+            g1 = CIRC_group_split(uu+1);
+            CIRC_AW_this_group_idx = find(wake_starts_CIRC_AW >= g0 & wake_ends_CIRC_AW < g1);
+            CIRC_QW_this_group_idx = find(wake_starts_CIRC_QW >= g0 & wake_ends_CIRC_QW < g1);
+            CIRC_AW_this_group{uu} = AW_delta_nonan(CIRC_AW_this_group_idx);
+            CIRC_QW_this_group{uu}= QW_delta_nonan(CIRC_QW_this_group_idx);
+            CIRC_AW_group_means(uu) = nanmean(CIRC_AW_this_group{uu});
+            CIRC_AW_group_sem(uu) = std(CIRC_AW_this_group{uu},0,'omitnan') / sqrt(numel(CIRC_AW_this_group{uu})-1);
+            CIRC_QW_group_means(uu) = nanmean(CIRC_QW_this_group{uu});
+            CIRC_QW_group_sem(uu) = std(CIRC_QW_this_group{uu},0,'omitnan') / sqrt(numel(CIRC_QW_this_group{uu})-1);
+            CIRC_group_means_offT(uu) = mean([g0,g1]);
+        end
+    
+        %% Fig 5H - plotting the first-last change - Light vs dark
+        mylims = 1;
+        
+        for per_num = 1:length(CIRC_group_split)-1
+            %light group == 1
+    %         per_num = 1;
+        
+            [~,p_aw] = ttest(CIRC_AW_this_group{per_num});
+            [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            [~,p_qw] = ttest(CIRC_QW_this_group{per_num});
+            [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            
+            dfig = figure();
+            set(dfig,'position',[.1 .2 .25 .4]);
+            box off
+            hold on;
+            bw = .3;
+            csz = 20;
+            mfc1 = c_aw;
+            mfc2 = c_qw;
+            ec1 = 'none';
+            ec2 = 'none';
+        
+            aw_bar = bar(1,CIRC_AW_group_means(per_num),bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(1,CIRC_AW_group_means(per_num),CIRC_AW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(2,CIRC_QW_group_means(per_num),bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(2,CIRC_QW_group_means(per_num),CIRC_QW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+    
+            
+    %         data_toplot = padmat(CIRC_AW_this_group{per_num},CIRC_QW_this_group{per_num}, 2);
+    %                 
+    %         p1 = UnivarScatter_ATP(data_toplot,'BoxType','SEM',...
+    %             'Width',1.2,'Compression',80,'MarkerFaceColor',[mfc1;mfc2],...
+    %             'PointSize',20,'StdColor','none','SEMColor',[0 0 0],...
+    %             'Whiskers','lines','WhiskerLineWidth',3,'MarkerEdgeColor',[mfc1;mfc2]);
+    %         ref_l = refline(0,0);
+    %         ref_l.LineStyle = '--';
+    %         ref_l.LineWidth = 1.5;
+    %         ref_l.Color = 'k';
+    
+            if mylims == 1
+                xl = [.5 2.5];
+                yl = [-0.2 0.3];
+                yt = -0.2:.1:0.3;
+            else
+                xl = get(gca,'xlim');
+                yl = get(gca,'ylim');
+                yt = get(gca,'ytick');
+            end
+            text(.75,0.18,sprintf('p = %.4f',p_aw),'fontsize',16);
+            text(1.75,0.18,sprintf('p = %.4f',p_qw),'fontsize',16);
+            set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
+                'ytick',yt);
+            ylabel('Firing rate (z)','fontsize',22);
+    
+            if per_num == 1
+                title({['Ext. Wake delta FR by state'],...
+                    ['- Light Period']},'fontsize',16);
+            else
+                title({['Ext. Wake delta FR by state'],...
+                    ['- Dark Period']},'fontsize',16);
+            end
+        end
+    
+    
+        %% calculate circadian bins for later circ plotting
+        CIRC_AW_this_group = [];
+        CIRC_QW_this_group = [];
+        CIRC_AW_group_means = [];
+        CIRC_AW_group_sem = [];
+        CIRC_QW_group_means = [];
+        CIRC_QW_group_sem = [];
+        CIRC_group_means_offT = [];
+    
+        CIRC_group_split = 0 : 3 : 24;
+        ngroups = numel(CIRC_group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = CIRC_group_split(uu);
+            g1 = CIRC_group_split(uu+1);
+            CIRC_AW_this_group_idx = find(wake_starts_CIRC_AW >= g0 & wake_starts_CIRC_AW < g1);
+            CIRC_QW_this_group_idx = find(wake_starts_CIRC_QW >= g0 & wake_starts_CIRC_QW < g1);
+            CIRC_AW_this_group = AW_delta_nonan(CIRC_AW_this_group_idx);
+            CIRC_QW_this_group = QW_delta_nonan(CIRC_QW_this_group_idx);
+            CIRC_AW_group_means(uu) = nanmean(CIRC_AW_this_group);
+            CIRC_AW_group_sem(uu) = std(CIRC_AW_this_group,0,'omitnan') / sqrt(numel(CIRC_AW_this_group)-1);
+            CIRC_QW_group_means(uu) = nanmean(CIRC_QW_this_group);
+            CIRC_QW_group_sem(uu) = std(CIRC_QW_this_group,0,'omitnan') / sqrt(numel(CIRC_QW_this_group)-1);
+            CIRC_group_means_offT(uu) = mean([g0,g1]);
+        end
+        
+        
+        [r_circ,p_circ] = corr(wake_starts_CIRC_AW, AW_delta_nonan, 'Type', corr_type);
+        a_circ = get_asterisks_from_pval(p_circ);
+        l_circ = polyfit(wake_starts_CIRC_AW, AW_delta_nonan, 1);
+        
+        markersize = 5;
+        mylims = 1;
+        
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .5 .5]);
+    %     subplot(2,1,1)
+    %     if dep
+        scatter(wake_starts_CIRC_AW,AW_delta_nonan,markersize^2,[.7 .7 .7],'filled');
+    %     else
+    %         scatter(wake_starts_CIRC,AW_delta_nonan,markersize^2,c_aw);
+    %     end
+        hold on;
+        if mylims
+            xlims = [-1 25];
+            ylims = [-1.5 1];
+            xl2 = [-1 25];
+            yl2 = [-.5 .2];
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):1:xlims(end);
+        Y = l_circ(2) + l_circ(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+    %      if dep
+        mfc = c_aw;
+    %     else
+    %         mfc = 'none';
+    %     end
+        errorbar(CIRC_group_means_offT,CIRC_AW_group_means,CIRC_AW_group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+        text(xlims(2)*.8,ylims(2)*.9,sprintf('r = %.3f\np = %.3f',r_circ,p_circ),'fontsize',16);
+        set(gca,'xlim',xlims,'ylim',ylims,'xtick',0:3:24);
+        ylabel('\Delta Firing rate (z)','fontsize',21);
+        xlabel('ZT time','fontsize',19);
+        title('Ext. Wake deltaFr AW by ZT','fontsize',18);
+    
+        %{
+        subplot(2,1,2);
+        if dep
+            mfc = c_aw;
+        else
+            mfc = 'none';
+        end
+        errorbar(CIRC_group_means_offT,CIRC_AW_group_means,CIRC_AW_group_sem,'o','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+        hold on;
+        box off
+        plot(X,Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+    %         text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',r_circ,p_circ),'fontsize',16);
+        end
+        ylabel('\Delta Firing rate (z)','fontsize',21);
+        xlabel('ZT time','fontsize',20);
+        set(gca,'xtick',0:3:24);
+        %}
+        
+        
+        %% CORRELATION BETWEEN DELTA FR AND CIRCADIAN TIME IN QW
+        
+        wake_starts_CIRC_QW = mod(wake_starts_nonan_QW./3600, 24);
+        
+        [r_circ_QW,p_circ_QW] = corr(wake_starts_CIRC_QW, QW_delta_nonan, 'Type', corr_type);
+        a_circ_QW = get_asterisks_from_pval(p_circ_QW);
+        l_circ_QW = polyfit(wake_starts_CIRC_QW, QW_delta_nonan, 1);
+        
+        
+        
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .5 .75]);
+        subplot(2,1,1);
+    %     if dep
+        scatter(wake_starts_CIRC_QW,QW_delta_nonan,markersize^2,c_qw,'filled');
+    %     else
+    %         scatter(wake_starts_CIRC_QW,QW_delta_nonan,markersize^2,c_qw);
+    %     end
+        hold on;
+        if mylims
+            xlims = [-1 25];
+            ylims = [-2 2];
+            xl2 = [-1 25];
+            yl2 = [-0.5 0.2];
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):1:xlims(end);
+        Y = l_circ_QW(2) + l_circ_QW(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+        text(xlims(2)*.8,ylims(2)*.9,sprintf('r = %.3f\np = %.3f',r_circ_QW,p_circ_QW),'fontsize',16);
+        set(gca,'xlim',xlims,'ylim',ylims,'xtick',0:4:24);
+        ylabel('\Delta Firing rate (z)','fontsize',21);
+        xlabel('ZT time');
+        title('Ext. Wake deltaFr QW by ZT','fontsize',18);
+        
+        subplot(2,1,2);
+    %     if dep
+        mfc = c_qw;
+    %     else
+    %         mfc = 'none';
+    %     end
+        errorbar(CIRC_group_means_offT,CIRC_QW_group_means,CIRC_QW_group_sem,'o','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_qw);
+        hold on;
+        box off
+        plot(X,Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',r_circ_QW,p_circ_QW),'fontsize',16);
+        end
+        ylabel('\Delta Firing rate (z)','fontsize',21);
+        xlabel('ZT time','fontsize',20);
+        set(gca,'xtick',0:3:24);
+        
+        [r_cd,p_cd] = corr(wake_starts_CIRC_QW, wakedur_nonan_QW, 'Type', corr_type);
+        a_cd = get_asterisks_from_pval(p_cd);
+        l_cd = polyfit(wake_starts_CIRC_QW, wakedur_nonan_QW, 1);
+        
+        markersize = 7;
+        mylims = 1;
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .25 .8]);
+        subplot(2,1,1);
+    %     if dep
+        scatter(wake_starts_CIRC_AW,wakedur_nonan_AW,markersize^2,c_aw,'filled');
+    %     else
+    %         scatter(wake_starts_CIRC,wakedur_nonan,markersize^2,c_aw);
+    %     end
+        hold on;
+        if mylims
+            xlims = [-1 25];
+            ylims = [0 7000];
+            xl2 = [0 60];
+            yl2 = [-2 2];
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):1:xlims(end);
+        Y = l_cd(2) + l_cd(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+        text(xlims(2)*.8,ylims(2)*.9,sprintf('r = %.3f\np = %.3f',r_cd,p_cd),'fontsize',16);
+        set(gca,'xlim',xlims,'ylim',ylims,'xtick',0:4:24);
+        ylabel('Duration','fontsize',21);
+        xlabel('ZT time','fontsize',19);
+        title('Ext. Wake Duration by ZT','fontsize',18);
+    
+    
+        %% delta changes vs. binned time post hunt
+    
+        wake_starts_AW = wake_starts_nonan_AW./3600;
+        wake_starts_QW = wake_starts_nonan_QW./3600;
+        
+        wake_ends_AW = wake_starts_AW + wakedur_nonan_AW/3600;
+        wake_ends_QW = wake_starts_QW + wakedur_nonan_QW/3600;
+    
+        %% calculate light vs dark circ data bins
+        AW_this_group = {};
+        QW_this_group = {};
+        AW_group_means = [];
+        AW_group_sem = [];
+        QW_group_means = [];
+        QW_group_sem = [];
+        group_means_offT = [];
+        
+        group_hrs = 24;
+        group_split = post_hunt_hr : group_hrs : 6.5*24;
+        ngroups = numel(group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = group_split(uu);
+            g1 = group_split(uu+1);
+            AW_this_group_idx = find(wake_starts_AW >= g0 & wake_ends_AW < g1);
+            QW_this_group_idx = find(wake_starts_QW >= g0 & wake_ends_QW < g1);
+            AW_this_group{uu} = AW_delta_nonan(AW_this_group_idx);
+            QW_this_group{uu}= QW_delta_nonan(QW_this_group_idx);
+            AW_group_means(uu) = nanmean(AW_this_group{uu});
+            AW_group_sem(uu) = std(AW_this_group{uu},0,'omitnan') / sqrt(numel(AW_this_group{uu})-1);
+            QW_group_means(uu) = nanmean(QW_this_group{uu});
+            QW_group_sem(uu) = std(QW_this_group{uu},0,'omitnan') / sqrt(numel(QW_this_group{uu})-1);
+            group_means_offT(uu) = mean([g0,g1]);
+        end
+    
+        dfig = figure();
+        set(dfig,'position',[0.0510 0.4944 0.3969 0.3407]);
+        box off
+        hold on;
+        bw = .3;
+        csz = 20;
+        mfc1 = c_aw;
+        mfc2 = c_qw;
+        ec1 = 'none';
+        ec2 = 'none';    
+        mylims = 0;
+        for per_num = 1:length(group_split)-1
+            %light group == 1
+    %         per_num = 1;
+            
+            if ~isempty(AW_this_group{per_num})
+                [~,p_aw] = ttest(AW_this_group{per_num});
+    %             [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            else
+                p_aw = 'nan';
+            end
+            if ~isempty(QW_this_group{per_num})
+                [~,p_qw] = ttest(QW_this_group{per_num});
+    %             [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            else
+                p_qw = 'nan';
+            end
+            
+            bar_x1 = (per_num-1)*2 + 1;
+            bar_x2 = (per_num-1)*2 + 2;
+    
+            aw_bar = bar(bar_x1,AW_group_means(per_num),bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(bar_x1,AW_group_means(per_num),AW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(bar_x2,QW_group_means(per_num),bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(bar_x2,QW_group_means(per_num),QW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+    
+            text(bar_x1,0.2,sprintf('p = %.4f',p_aw),'fontsize',10,'Rotation',45);
+            text(bar_x2,0.2,sprintf('p = %.4f',p_qw),'fontsize',10,'Rotation',45);
+            ylabel('Firing rate change (z)','fontsize',16);
+    
+    %         if per_num == 1
+    %             title({['Ext. Wake delta FR by state'],...
+    %                 ['- Light Period']},'fontsize',16);
+    %         else
+    %             title({['Ext. Wake delta FR by state'],...
+    %                 ['- Dark Period']},'fontsize',16);
+    %         end
+        end
+    
+        post_hunt_hrs = group_split+group_hrs/2 - post_hunt_hr;
+        set(gca,'xtick',1.5:2:length(group_split)*2,'xticklabel',post_hunt_hrs)
+        xlabel('Hours post hunt')
+        title('FR change by state post hunt')
+        
+    case {3,5}
+        
+        %% calculate first last changes
+        % for fractional changes against duration time corr plots
+        % loop through and normalize changes to first QW/AW
+        AW_offT_nonan = [];
+        AW_dFR_nonan = [];
+        QW_offT_nonan = [];
+        QW_dFR_nonan = [];
+
+        AW_BL_FR_nonan = [];
+        QW_BL_FR_nonan = [];
+        for anim_i = 1:size(all_QW_zFR,1)
+            for tt = 1:size(all_QW_zFR,2)
+                QW_wake_per = all_QW_zFR{anim_i,tt};
+                AW_wake_per = all_AW_zFR{anim_i,tt};
+                QW_wake_perT = all_QW_offT{anim_i,tt};
+                AW_wake_perT = all_AW_offT{anim_i,tt};  
+                
+                QW_wake_BL_FR = all_BL_cell_FR_QW{anim_i,tt};
+                AW_wake_BL_FR = all_BL_cell_FR_AW{anim_i,tt}; 
+
+                if isnan(QW_wake_per)
+                    continue
+                end
+                
+                if size(QW_wake_per,2) < 2
+                    continue
+                end
+
+                QW_wake_per(QW_wake_per<min_FR_dur_frac) = NaN;
+
+                QW_FR_1 = QW_wake_per(:,1);
+                QW_dFR_per = [];
+                for qw_i = 2:size(QW_wake_per,2)
+                    QW_dFR_per = [QW_dFR_per, QW_wake_per(:,qw_i)./QW_wake_per(:,1)];
+                end
+                
+                QW_wake_perT = QW_wake_perT(:,2:end);
+                QW_dFR_nonan = [QW_dFR_nonan; QW_dFR_per(:)];
+                QW_offT_nonan = [QW_offT_nonan; QW_wake_perT(:)];
+
+                QW_FR_toadd = QW_wake_BL_FR(:,2:end);
+                QW_BL_FR_nonan = [QW_BL_FR_nonan; QW_FR_toadd(:)];
+
+                
+                if length(QW_offT_nonan) ~= length(QW_dFR_nonan)
+                    keyboard
+                end
+
+                if isnan(AW_wake_per)
+                    continue
+                end
+
+                AW_wake_per(AW_wake_per<min_FR_dur_frac) = NaN;
+                AW_dFR_per = [];
+                for qw_i = 1:size(AW_wake_per,2)
+                    AW_dFR_per = [AW_dFR_per, AW_wake_per(:,qw_i)./QW_wake_per(:,1)];
+                end
+
+                AW_wake_perT = AW_wake_perT(:,1:end);
+                AW_dFR_nonan = [AW_dFR_nonan; AW_dFR_per(:)];
+                AW_offT_nonan = [AW_offT_nonan; AW_wake_perT(:)];
+
+                AW_FR_toadd = AW_wake_BL_FR(:,1:end);
+                AW_BL_FR_nonan = [AW_BL_FR_nonan; AW_FR_toadd(:)];
+            end
+
+        end
+
+        QW_nans = isnan(QW_dFR_nonan);
+        QW_outlier = QW_dFR_nonan > max_FR_dur_frac_Delta;
+        QW_toRem = (QW_nans + QW_outlier) > 0;
+        num_outs = sum(QW_toRem);
+        disp(['Number of QW dFR outliers removed: ',num2str(num_outs)])   
+
+        QW_dFR_nonan(QW_toRem) = [];
+        QW_offT_nonan(QW_toRem) = [];
+        QW_BL_FR_nonan(QW_toRem) = [];
+
+        AW_nans = isnan(AW_dFR_nonan);
+        AW_outlier = AW_dFR_nonan > max_FR_dur_frac_Delta;
+        AW_toRem = (AW_nans + AW_outlier) > 0;
+        num_outs = sum(AW_toRem);
+        disp(['Number of AW dFR outliers removed: ',num2str(num_outs)])
+
+        AW_dFR_nonan(AW_toRem) = [];
+        AW_offT_nonan(AW_toRem) = [];
+        AW_BL_FR_nonan(AW_toRem) = [];
+        
+        %% Fig 5H - plotting the first-last change
+        if mean_t == 5
+
+            all_data = [AW_dFR_nonan AW_offT_nonan];
+            all_data_sort = sortrows(all_data,2);
+            
+            ngroups = 10;
+            group_split = round(linspace(0,numel(AW_offT_nonan),ngroups+1));
+            for uu = 1:ngroups
+                this_group = all_data_sort(group_split(uu)+1 : group_split(uu+1), 1);
+                group_means(uu) = nanmean(this_group);
+                group_sem(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+                group_means_offT(uu) = nanmean(all_data_sort(group_split(uu)+1 : group_split(uu+1), 2));
+            end
+            
+            [aw_rho,aw_p_rho] = corr(AW_dFR_nonan, AW_offT_nonan, 'Type', corr_type);
+            aw_asterisks = get_asterisks_from_pval(aw_p_rho);
+            aw_lincoeff = polyfit(AW_offT_nonan, AW_dFR_nonan, 1);
+    
+            %% plotting
+            markersize = 4;
+            mylims = 1;
+            
+            setFigureDefaults;
+            figure();
+            set(gcf,'position',[.2 .1 .3 .8]);
+            subplot(2,1,1);
+        %     if dep
+            scatter(AW_offT_nonan,AW_dFR_nonan,markersize^2,c_aw,'s','filled');
+        %     else
+        %         scatter(AW_offT_nonan,AW_zFR_nonan,markersize^2,c_aw,'s');
+        %     end
+            hold on;
+            if mylims
+                xlims = [-500 14000];
+                ylims = [0 max_FR_dur_frac_Delta];
+                xl2 = [-250 10000];
+                if strcmp(loadFieldname,'ContCell')
+                    yl2 = [0.8 2];
+                else
+                    yl2 = [1 2];
+                end
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            X = xlims(1):10:xlims(end);
+            Y = aw_lincoeff(2) + aw_lincoeff(1).*X;
+            plot(X,Y,'--k','linewidth',1.5);
+            set(gca,'xlim',xlims,'ylim',ylims);
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            title('Ext. Wake change in FR during AW - scatter','fontsize',18);
+            
+            subplot(2,1,2);
+        %     if dep
+                mfc = c_aw;
+        %     else
+        %         mfc = 'none';
+        %     end
+            errorbar(group_means_offT,group_means,group_sem,'s','capsize',12,'markersize',8,...
+                'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+            hold on;
+            box off
+            plot(X,Y,'--k','linewidth',1.5);
+            if mylims
+                set(gca,'xlim',xl2,'ylim',yl2);
+                text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',aw_rho,aw_p_rho),'fontsize',16);
+            end
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            xlabel('Time from start of extended wake (s)','fontsize',20);
+            
+
+
+            %% QW
+            QW_all_data = [QW_dFR_nonan QW_offT_nonan];
+            QW_all_data_sort = sortrows(QW_all_data,2);
+            
+            % ngroups = 5;
+            QW_group_split = round(linspace(0,numel(QW_offT_nonan),ngroups+1));
+            for uu = 1:ngroups
+                QW_this_group = QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 1);
+                QW_group_means(uu) = nanmean(QW_this_group);
+                QW_group_sem(uu) = std(QW_this_group,0,'omitnan') / sqrt(numel(QW_this_group)-1);
+                QW_group_means_offT(uu) = nanmean(QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 2));
+            end
+
+            [qw_rho,qw_p_rho] = corr(QW_offT_nonan, QW_dFR_nonan, 'Type', corr_type);
+            qw_asterisks = get_asterisks_from_pval(qw_p_rho);
+            qw_lincoeff = polyfit(QW_offT_nonan, QW_dFR_nonan, 1);
+            
+            %% plotting
+            markersize = 4;
+            mylims = 1;
+            
+            setFigureDefaults;
+            figure();
+            set(gcf,'position',[.2 .1 .3 .8]);
+            subplot(2,1,1);
+            scatter(QW_offT_nonan,QW_dFR_nonan,markersize^2,c_qw,'s','filled');
+
+            hold on;
+            if mylims
+                xlims = [-500 14000];
+                ylims = [0 max_FR_dur_frac_Delta];
+                xl2 = [-250 10000];
+                if strcmp(loadFieldname,'ContCell')
+                    yl2 = [0.8 2];
+                else
+                    yl2 = [1 2];
+                end
+
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            X = xlims(1):10:xlims(end);
+            Y = qw_lincoeff(2) + qw_lincoeff(1).*X;
+            plot(X,Y,'--k','linewidth',1.5);
+            set(gca,'xlim',xlims,'ylim',ylims);
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            title('Ext. Wake change in FR during QW - scatter','fontsize',18);
+        
+        %     if dep
+                mfc = c_qw;
+        %     else
+        %         mfc = 'none';
+        %     end
+            subplot(2,1,2);
+            errorbar(QW_group_means_offT,QW_group_means,QW_group_sem,'s','capsize',12,'markersize',8,...
+                'linestyle','none','markerfacecolor',mfc,'color',c_qw,'linewidth',1.5);
+            hold on;
+            box off;
+            plot(X,Y,'--k','linewidth',1.5);
+            if mylims
+                set(gca,'xlim',xl2,'ylim',yl2);
+                text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',qw_rho,qw_p_rho),'fontsize',16);
+            end
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            xlabel('Time from start of extended wake (s)','fontsize',20);
+
+
+            % change by BL FR
+
+            all_data = [AW_dFR_nonan AW_BL_FR_nonan];
+            all_data_sort = sortrows(all_data,2);
+            
+            ngroups = 10;
+            group_split = round(linspace(0,numel(AW_BL_FR_nonan),ngroups+1));
+            for uu = 1:ngroups
+                this_group = all_data_sort(group_split(uu)+1 : group_split(uu+1), 1);
+                group_means(uu) = nanmean(this_group);
+                group_sem(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+                group_means_offT(uu) = nanmean(all_data_sort(group_split(uu)+1 : group_split(uu+1), 2));
+            end
+            
+            [aw_rho,aw_p_rho] = corr(AW_dFR_nonan, AW_BL_FR_nonan, 'Type', corr_type);
+            aw_asterisks = get_asterisks_from_pval(aw_p_rho);
+            aw_lincoeff = polyfit(AW_BL_FR_nonan, AW_dFR_nonan, 1);
+    
+            %% plotting
+            markersize = 4;
+            mylims = 1;
+            
+            setFigureDefaults;
+            figure();
+            set(gcf,'position',[.2 .1 .3 .8]);
+            subplot(2,1,1);
+        %     if dep
+            scatter(AW_BL_FR_nonan,AW_dFR_nonan,markersize^2,c_aw,'s','filled');
+        %     else
+        %         scatter(AW_offT_nonan,AW_zFR_nonan,markersize^2,c_aw,'s');
+        %     end
+            hold on;
+            if mylims
+                xlims = [-0 10];
+                ylims = [0 max_FR_dur_frac_Delta];
+                xl2 = [-0 8];
+                if strcmp(loadFieldname,'ContCell')
+                    yl2 = [0.8 2];
+                else
+                    yl2 = [1 2];
+                end                
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            X = xlims(1):10:xlims(end);
+            Y = aw_lincoeff(2) + aw_lincoeff(1).*X;
+            plot(X+(min(AW_BL_FR_nonan)),Y,'--k','linewidth',1.5);
+%             set(gca,'XScale','log')
+            set(gca,'xlim',xlims,'ylim',ylims);
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            title('Ext. Wake change in FR during AW - scatter','fontsize',18);
+            
+            subplot(2,1,2);
+        %     if dep
+                mfc = c_aw;
+        %     else
+        %         mfc = 'none';
+        %     end
+            errorbar(group_means_offT,group_means,group_sem,'s','capsize',12,'markersize',8,...
+                'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+            hold on;
+            box off
+%             set(gca,'XScale','log')
+
+            plot(X+(min(group_means_offT)),Y,'--k','linewidth',1.5);
+            if mylims
+                set(gca,'xlim',xl2,'ylim',yl2);
+                text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',aw_rho,aw_p_rho),'fontsize',16);
+            end
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            xlabel('Baseline cell FR (Hz)','fontsize',20);            
+
+
+            %% QW
+            QW_all_data = [QW_dFR_nonan QW_BL_FR_nonan];
+            QW_all_data_sort = sortrows(QW_all_data,2);
+            
+            % ngroups = 5;
+            QW_group_split = round(linspace(0,numel(QW_BL_FR_nonan),ngroups+1));
+            for uu = 1:ngroups
+                QW_this_group = QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 1);
+                QW_group_means(uu) = nanmean(QW_this_group);
+                QW_group_sem(uu) = std(QW_this_group,0,'omitnan') / sqrt(numel(QW_this_group)-1);
+                QW_group_means_offT(uu) = nanmean(QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 2));
+            end
+
+            [qw_rho,qw_p_rho] = corr(QW_BL_FR_nonan, QW_dFR_nonan, 'Type', corr_type);
+            qw_asterisks = get_asterisks_from_pval(qw_p_rho);
+            qw_lincoeff = polyfit(QW_BL_FR_nonan, QW_dFR_nonan, 1);
+            
+            %% plotting
+            markersize = 4;
+            mylims = 1;
+            
+            setFigureDefaults;
+            figure();
+            set(gcf,'position',[.2 .1 .3 .8]);
+            subplot(2,1,1);
+            scatter(QW_BL_FR_nonan,QW_dFR_nonan,markersize^2,c_qw,'s','filled');
+
+            hold on;
+            if mylims
+                xlims = [-0 10];
+                ylims = [0 max_FR_dur_frac_Delta];
+                xl2 = [-0 8];
+                if strcmp(loadFieldname,'ContCell')
+                    yl2 = [0.8 2];
+                else
+                    yl2 = [1 2];
+                end
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            X = xlims(1):10:xlims(end);
+            Y = qw_lincoeff(2) + qw_lincoeff(1).*X;
+            plot(X+(min(QW_BL_FR_nonan)),Y,'--k','linewidth',1.5);
+            set(gca,'xlim',xlims,'ylim',ylims);
+%             set(gca,'XScale','log')
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            title('Ext. Wake change in FR during QW - scatter','fontsize',18);
+        
+        %     if dep
+                mfc = c_qw;
+        %     else
+        %         mfc = 'none';
+        %     end
+            subplot(2,1,2);
+            errorbar(QW_group_means_offT,QW_group_means,QW_group_sem,'s','capsize',12,'markersize',8,...
+                'linestyle','none','markerfacecolor',mfc,'color',c_qw,'linewidth',1.5);
+%             set(gca,'XScale','log')
+            hold on;
+            box off;
+            plot(X+(min(QW_group_means_offT)),Y,'--k','linewidth',1.5);
+            if mylims
+                set(gca,'xlim',xl2,'ylim',yl2);
+                text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',qw_rho,qw_p_rho),'fontsize',16);
+            end
+            ylabel({['Firing rate frac. change'],['(last / first QW epoch)']},'fontsize',16);
+            xlabel('Baseline cell FR (Hz)','fontsize',20);            
+
+
+
+            % BAR GRAPHS
+            mylims = 1;
+            [~,p_aw] = ttest(AW_delta_nonan-1);
+            [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            [~,p_qw] = ttest(QW_delta_nonan-1);
+            [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            
+            dfig = figure();
+            set(dfig,'position',[.1 .2 .25 .4]);
+            box off
+            hold on;
+            bw = .3;
+            csz = 20;
+            mfc1 = c_aw;
+            mfc2 = c_qw;
+            ec1 = 'none';
+            ec2 = 'none';
+    
+            aw_bar = bar(1,AW_mean,bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(1,AW_mean,AW_sem,'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(2,QW_mean,bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(2,QW_mean,QW_sem,'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+            if mylims
+                xl = [.5 2.5];
+                yl = [0.8 1.3];
+                yt = 0.8:.1:1.3;
+            else
+                xl = get(gca,'xlim');
+                yl = get(gca,'ylim');
+                yt = get(gca,'ytick');
+            end
+            text(.75,1.25,sprintf('p = %.4f',p_aw),'fontsize',16);
+            text(1.75,1.25,sprintf('p = %.4f',p_qw),'fontsize',16);
+            set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
+                'ytick',yt);
+            ylabel({['Firing rate frac. change'],['(last / first epoch)']},'fontsize',16);
+            title('Ext. Wake delta FR by state','fontsize',18);
+        
+            ref_l = refline(0,1);
+            ref_l.LineStyle = '--';
+            ref_l.LineWidth = 1.5;
+            ref_l.Color = 'k';
+
+        else
+    
+            mylims = 1;
+            
+            [~,p_aw] = ttest(AW_delta_nonan);
+            [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            [~,p_qw] = ttest(QW_delta_nonan);
+            [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            
+            dfig = figure();
+            set(dfig,'position',[.1 .2 .25 .4]);
+            box off
+            hold on;
+            bw = .3;
+            csz = 20;
+            mfc1 = c_aw;
+            mfc2 = c_qw;
+            ec1 = 'none';
+            ec2 = 'none';
+    
+        %     aw_bar = bar(1,AW_mean,bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+        %     aw_err = errorbar(1,AW_mean,AW_sem,'linestyle','none','capsize',csz,...
+        %         'color',c_aw,'linewidth',2);
+            qw_bar = bar(1,QW_mean,bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(1,QW_mean,QW_sem,'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+            if mylims
+                xl = [.5 1.5];
+                yl = [0.8 1.3];
+                yt = 0.8:.1:1.3;
+            else
+                xl = get(gca,'xlim');
+                yl = get(gca,'ylim');
+                yt = get(gca,'ytick');
+            end
+            text(.75,1.25,sprintf('p = %.4f',p_aw),'fontsize',16);
+        %     text(1.75,1.25,sprintf('p = %.4f',p_qw),'fontsize',16);
+            set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Wake'},...
+                'ytick',yt);
+            ylabel({['Firing rate frac. change'],['(z last / z first epoch)']},'fontsize',16);
+            title('Ext. Wake delta FR by state','fontsize',18);
+        
+            ref_l = refline(0,1);
+            ref_l.LineStyle = '--';
+            ref_l.LineWidth = 1.5;
+            ref_l.Color = 'k';
+            
+        
+            markersize = 5;
+            
+            all_data_d = [QW_delta_nonan wakedur_nonan_QW];
+            all_data_sort_d = sortrows(all_data_d,2);
+            
+            ngroups = 10;
+            group_split_d = round(linspace(0,numel(QW_delta_nonan),ngroups+1));
+            clear group_means_d group_sem_d group_means_offT_d group_max_d
+            for uu = 1:ngroups
+                this_group = all_data_sort_d(group_split_d(uu)+1 : group_split_d(uu+1), 1);
+                group_means_d(uu) = nanmean(this_group);
+                group_sem_d(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+                group_means_offT_d(uu) = nanmean(all_data_sort_d(group_split_d(uu)+1 : group_split_d(uu+1), 2));
+                group_max_d(uu) = max(all_data_sort_d(group_split_d(uu)+1 : group_split_d(uu+1), 2));
+            end
+        
+            
+            [rho_d,p_rho_d] = corr(wakedur_nonan_QW, QW_delta_nonan, 'Type', corr_type);
+        %     asterisks_d = get_asterisks_from_pval(p_rho_d);
+            lincoeff_d = polyfit(wakedur_nonan_QW, QW_delta_nonan, 1);
+            
+            
+            mylims = 0;
+            
+            setFigureDefaults;
+            figure();
+            set(gcf,'position',[.1 .1 .6 .7]);
+            subplot(2,1,1);
+        %     if dep
+                scatter(wakedur_nonan_QW,QW_delta_nonan,markersize^2,'k','filled');
+        %     else
+        %         scatter(wakedur_nonan,QW_delta_nonan,markersize^2,'k');
+        %     end
+            hold on;
+            if mylims
+                xlims = [-500 6000];
+                ylims = [0 4];
+                xl2 = [-500 6000];
+                yl2 = [0 2.5];
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            X = xlims(1):10:xlims(end);
+            Y = lincoeff_d(2) + lincoeff_d(1).*X;
+            plot(X,Y,'--k','linewidth',1.5);
+            text(xlims(2)*.8,ylims(2)*.9,sprintf('r = %.4f\np = %.4f',rho_d,p_rho_d),'fontsize',16);
+            set(gca,'xlim',xlims,'ylim',ylims);
+            ylabel('Fractional change in firing rate','fontsize',21);
+            
+            subplot(2,1,2);
+        %     if dep
+                mfc = 'k';
+                mfc2 = [.7 .7 .7];
+        %     else
+        %         mfc = 'none';
+        %         mfc2 = 'none';
+        %     end
+            
+            hold on;
+            errorbar(wakedur_bycell_nonan,QW_all_deltaFR,QW_all_deltaFR,'o',...
+                'color',[.7 .7 .7],'markerfacecolor',mfc2,'linestyle','none',...
+                'linewidth',1.5,'markersize',5);
+            errorbar(group_means_offT_d,group_means_d,group_sem_d,'o','capsize',7,'markersize',7,...
+                'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color','k');
+             X = xlims(1):10:xlims(end);
+            Y = lincoeff_d(2) + lincoeff_d(1).*X;
+            plot(X,Y,'--k','linewidth',1.5);
+            plot(xlims,[1 1],'m:','linewidth',2);
+            set(gca,'ylim',yl2,'xlim',xl2);
+            
+            
+            ylabel('Fractional change in firing rate','fontsize',21);
+            xlabel('Duration of extended wake (s)','fontsize',20);
+            
+        end
+      
+    
+        wake_starts_CIRC_AW = mod(wake_starts_nonan_AW./3600, 24);
+        wake_starts_CIRC_QW = mod(wake_starts_nonan_QW./3600, 24);
+        
+        wake_ends_CIRC_AW = wake_starts_CIRC_AW + wakedur_nonan_AW/3600;
+        wake_ends_CIRC_QW = wake_starts_CIRC_QW + wakedur_nonan_QW/3600;
+        
+        %% calculate light vs dark circ data bins
+        CIRC_AW_this_group = {};
+        CIRC_QW_this_group = {};
+        CIRC_AW_group_means = [];
+        CIRC_AW_group_sem = [];
+        CIRC_QW_group_means = [];
+        CIRC_QW_group_sem = [];
+        CIRC_group_means_offT = [];
+        
+        CIRC_group_split = 0 : 12 : 24;
+        ngroups = numel(CIRC_group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = CIRC_group_split(uu);
+            g1 = CIRC_group_split(uu+1);
+            CIRC_AW_this_group_idx = find(wake_starts_CIRC_AW >= g0 & wake_ends_CIRC_AW < g1);
+            CIRC_QW_this_group_idx = find(wake_starts_CIRC_QW >= g0 & wake_ends_CIRC_QW < g1);
+            CIRC_AW_this_group{uu} = AW_delta_nonan(CIRC_AW_this_group_idx);
+            CIRC_QW_this_group{uu}= QW_delta_nonan(CIRC_QW_this_group_idx);
+            CIRC_AW_group_means(uu) = nanmean(CIRC_AW_this_group{uu});
+            CIRC_AW_group_sem(uu) = std(CIRC_AW_this_group{uu},0,'omitnan') / sqrt(numel(CIRC_AW_this_group{uu})-1);
+            CIRC_QW_group_means(uu) = nanmean(CIRC_QW_this_group{uu});
+            CIRC_QW_group_sem(uu) = std(CIRC_QW_this_group{uu},0,'omitnan') / sqrt(numel(CIRC_QW_this_group{uu})-1);
+            CIRC_group_means_offT(uu) = mean([g0,g1]);
+        end
+    
+        %% Fig 5H - plotting the first-last change - Light vs dark
+        mylims = 1;
+        
+        for per_num = 1:length(CIRC_group_split)-1
+            %light group == 1
+    %         per_num = 1;
+        
+            [~,p_aw] = ttest(CIRC_AW_this_group{per_num});
+            [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            [~,p_qw] = ttest(CIRC_QW_this_group{per_num});
+            [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            
+            dfig = figure();
+            set(dfig,'position',[.1 .2 .25 .4]);
+            box off
+            hold on;
+            bw = .3;
+            csz = 20;
+            mfc1 = c_aw;
+            mfc2 = c_qw;
+            ec1 = 'none';
+            ec2 = 'none';
+        
+            aw_bar = bar(1,CIRC_AW_group_means(per_num),bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(1,CIRC_AW_group_means(per_num),CIRC_AW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(2,CIRC_QW_group_means(per_num),bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(2,CIRC_QW_group_means(per_num),CIRC_QW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+            if mylims
+                xl = [.5 2.5];
+                yl = [0.8 1.6];
+                yt = 0.8:.2:1.6;
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            text(.75,0.18,sprintf('p = %.4f',p_aw),'fontsize',16);
+    %         text(1.75,0.18,sprintf('p = %.4f',p_qw),'fontsize',16);
+            set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
+                'ytick',yt);
+            ylabel({['Firing rate frac. change'],['(last / first epoch)']},'fontsize',16);
+            ref_l = refline(0,1);
+            ref_l.LineStyle = '--';
+            ref_l.LineWidth = 1.5;
+            ref_l.Color = 'k';        
+            if per_num == 1
+                title({['Ext. Wake delta FR by state'],...
+                    ['- Light Period']},'fontsize',16);
+            else
+                title({['Ext. Wake delta FR by state'],...
+                    ['- Dark Period']},'fontsize',16);
+            end
+        end
+    
+    
+    
+        %% delta changes vs. binned time post hunt
+    
+        wake_starts_AW = wake_starts_nonan_AW./3600;
+        wake_starts_QW = wake_starts_nonan_QW./3600;
+        
+        wake_ends_AW = wake_starts_AW + wakedur_nonan_AW/3600;
+        wake_ends_QW = wake_starts_QW + wakedur_nonan_QW/3600;
+    
+        %% calculate light vs dark circ data bins
+        AW_this_group = {};
+        QW_this_group = {};
+        AW_group_means = [];
+        AW_group_sem = [];
+        QW_group_means = [];
+        QW_group_sem = [];
+        group_means_offT = [];
+        
+        group_hrs = 24;
+        group_split = post_hunt_hr : group_hrs : 6.5*24;
+        ngroups = numel(group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = group_split(uu);
+            g1 = group_split(uu+1);
+            AW_this_group_idx = find(wake_starts_AW >= g0 & wake_ends_AW < g1);
+            QW_this_group_idx = find(wake_starts_QW >= g0 & wake_ends_QW < g1);
+            AW_this_group{uu} = AW_delta_nonan(AW_this_group_idx);
+            QW_this_group{uu}= QW_delta_nonan(QW_this_group_idx);
+            AW_group_means(uu) = nanmean(AW_this_group{uu});
+            AW_group_sem(uu) = std(AW_this_group{uu},0,'omitnan') / sqrt(numel(AW_this_group{uu})-1);
+            QW_group_means(uu) = nanmean(QW_this_group{uu});
+            QW_group_sem(uu) = std(QW_this_group{uu},0,'omitnan') / sqrt(numel(QW_this_group{uu})-1);
+            group_means_offT(uu) = mean([g0,g1]);
+        end
+    
+        dfig = figure();
+        set(dfig,'position',[0.1021 0.2778 0.3521 0.3241]);
+        box off
+        hold on;
+        bw = .3;
+        csz = 20;
+        mfc1 = c_aw;
+        mfc2 = c_qw;
+        ec1 = 'none';
+        ec2 = 'none';    
+        mylims = 0;
+        for per_num = 1:length(group_split)-1
+            %light group == 1
+    %         per_num = 1;
+            
+            if ~isempty(AW_this_group{per_num})
+                [~,p_aw] = ttest(AW_this_group{per_num}-1);
+%                 [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            else
+                p_aw = 'nan';
+            end
+            if ~isempty(QW_this_group{per_num})
+                [~,p_qw] = ttest(QW_this_group{per_num}-1);
+%                 [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            else
+                p_qw = 'nan';
+            end
+            
+            bar_x1 = (per_num-1)*2 + 1;
+            bar_x2 = (per_num-1)*2 + 2;
+    
+            aw_bar = bar(bar_x1,AW_group_means(per_num),bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(bar_x1,AW_group_means(per_num),AW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(bar_x2,QW_group_means(per_num),bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(bar_x2,QW_group_means(per_num),QW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+    
+            text(bar_x1,1.45,sprintf('p = %.4f',p_aw),'fontsize',10,'Rotation',45);
+            text(bar_x2,1.45,sprintf('p = %.4f',p_qw),'fontsize',10,'Rotation',45);
+            ylabel({['Firing rate frac. change'],['(last / first epoch)']},'fontsize',16);
+    
+    %         if per_num == 1
+    %             title({['Ext. Wake delta FR by state'],...
+    %                 ['- Light Period']},'fontsize',16);
+    %         else
+    %             title({['Ext. Wake delta FR by state'],...
+    %                 ['- Dark Period']},'fontsize',16);
+    %         end
+        end
+    
+        post_hunt_hrs = group_split+group_hrs/2 - post_hunt_hr;
+        set(gca,'xtick',1.5:2:length(group_split)*2,'xticklabel',post_hunt_hrs)
+        xlabel('Hours post hunt')
+        ylim([0.75 1.6])
+
+        ref_l = refline(0,1);
+        ref_l.LineStyle = '--';
+        ref_l.LineWidth = 1.5;
+        ref_l.Color = 'k';             
+        title('FR change by state post hunt')
+    
+    
+    
+    
+        if save_delta_data
+            %         delta_data
+            WAKE_DELTAS.group_value                    = group_means_d;
+            WAKE_DELTAS.group_times                    = group_means_offT_d;
+            WAKE_DELTAS.params.G_bin                   = G_bin;
+            WAKE_DELTAS.params.dur_frac                = dur_frac;
+            WAKE_DELTAS.params.duration_threshold      = duration_threshold;
+            WAKE_DELTAS.params.mean_t                  = mean_t;
+            WAKE_DELTAS.params.ext_wake_time_thresh    = ext_wake_time_thresh;
+            
+            
+            sf = 'WAKE_DELTAS_v0.mat';
+            sd = 'Z:\ATP_MAIN\CODE\lfp_analysis_beta\Analysis_Data';
+            save([sd filesep sf],'WAKE_DELTAS','-v7.3');
+        end
+    
+    
+    
+    case {6}
+
+        
+        %% calculate first last changes
+        % for percent changes against duration time corr plots
+        % loop through and normalize changes to first QW/AW
+        AW_offT_nonan = [];
+        AW_dFR_nonan = [];
+        QW_offT_nonan = [];
+        QW_dFR_nonan = [];
+
+        AW_BL_FR_nonan = [];
+        QW_BL_FR_nonan = [];
+        for anim_i = 1:size(all_QW_zFR,1)
+            for tt = 1:size(all_QW_zFR,2)
+                QW_wake_per = all_QW_zFR{anim_i,tt};
+                AW_wake_per = all_AW_zFR{anim_i,tt};
+                QW_wake_perT = all_QW_offT{anim_i,tt};
+                AW_wake_perT = all_AW_offT{anim_i,tt};  
+                
+                QW_wake_BL_FR = all_BL_cell_FR_QW{anim_i,tt};
+                AW_wake_BL_FR = all_BL_cell_FR_AW{anim_i,tt}; 
+
+                if isnan(QW_wake_per)
+                    continue
+                end
+                
+                if size(QW_wake_per,2) < 2
+                    continue
+                end
+
+                QW_wake_per(QW_wake_per<min_FR_dur_frac) = NaN;
+
+                QW_FR_1 = QW_wake_per(:,1);
+                QW_dFR_per = [];
+                for qw_i = 2:size(QW_wake_per,2)
+                    qw_i_delta = 100*(QW_wake_per(:,qw_i) - QW_wake_per(:,1))./(QW_wake_per(:,1));
+                    QW_dFR_per = [QW_dFR_per; qw_i_delta];
+                end
+
+                QW_FR_toadd = QW_wake_BL_FR(:,2:end);
+                QW_BL_FR_nonan = [QW_BL_FR_nonan; QW_FR_toadd(:)];
+                
+                QW_wake_perT = QW_wake_perT(:,2:end);
+                QW_dFR_nonan = [QW_dFR_nonan; QW_dFR_per(:)];
+                QW_offT_nonan = [QW_offT_nonan; QW_wake_perT(:)];
+                
+                if length(QW_offT_nonan) ~= length(QW_dFR_nonan)
+                    disp('offT and dFR not same length')
+                    keyboard
+                end
+
+                if length(QW_BL_FR_nonan) ~= length(QW_dFR_nonan)
+                    disp('BL FR and dFR not same length')
+                    keyboard
+                end                
+
+                if isnan(AW_wake_per)
+                    continue
+                end
+
+                AW_wake_per(AW_wake_per<min_FR_dur_frac) = NaN;
+                AW_dFR_per = [];
+                for aw_i = 1:size(AW_wake_per,2)
+                    aw_i_delta = 100*(AW_wake_per(:,aw_i) - QW_wake_per(:,1))./(QW_wake_per(:,1));
+                    AW_dFR_per = [AW_dFR_per; aw_i_delta];
+                end
+
+                AW_wake_perT = AW_wake_perT(:,1:end);
+                AW_dFR_nonan = [AW_dFR_nonan; AW_dFR_per(:)];
+                AW_offT_nonan = [AW_offT_nonan; AW_wake_perT(:)];
+
+                AW_FR_toadd = AW_wake_BL_FR(:,1:end);
+                AW_BL_FR_nonan = [AW_BL_FR_nonan; AW_FR_toadd(:)];
+            end
+
+        end
+
+        QW_nans = isnan(QW_dFR_nonan);
+        QW_outlier = QW_dFR_nonan > max_FR_perc_Delta;
+%         QW_outlier = zeros(size(QW_nans));
+        QW_toRem = (QW_nans + QW_outlier) > 0;
+        num_outs = sum(QW_toRem);
+        disp(['Number of QW dFR outliers removed: ',num2str(num_outs)])   
+
+        QW_dFR_nonan(QW_toRem) = [];
+        QW_offT_nonan(QW_toRem) = [];
+        QW_BL_FR_nonan(QW_toRem) = [];
+
+        AW_nans = isnan(AW_dFR_nonan);
+        AW_outlier = AW_dFR_nonan > max_FR_perc_Delta;
+        AW_toRem = (AW_nans + AW_outlier) > 0;
+        num_outs = sum(AW_toRem);
+        disp(['Number of AW dFR outliers removed: ',num2str(num_outs)])
+
+        AW_dFR_nonan(AW_toRem) = [];
+        AW_offT_nonan(AW_toRem) = [];
+        AW_BL_FR_nonan(AW_toRem) = [];
+        
+        %% Fig 5H - plotting the first-last change
+
+        all_data = [AW_dFR_nonan AW_offT_nonan];
+        all_data_sort = sortrows(all_data,2);
+        
+        ngroups = 10;
+        group_split = round(linspace(0,numel(AW_offT_nonan),ngroups+1));
+        for uu = 1:ngroups
+            this_group = all_data_sort(group_split(uu)+1 : group_split(uu+1), 1);
+            group_means(uu) = nanmean(this_group);
+            group_sem(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+            group_means_offT(uu) = nanmean(all_data_sort(group_split(uu)+1 : group_split(uu+1), 2));
+        end
+        
+        
+%         x = (AW_dFR_nonan-nanmean(AW_dFR_nonan))/nanstd(AW_dFR_nonan);
+% %         log_dFR = log(AW_dFR_nonan);
+% %         x = (log_dFR-nanmean(log_dFR))/nanstd(log_dFR);
+%         [h,p] = kstest(x);
+%         figure;hist(x,100);title('z-score dFR AW histogram')
+%         disp(['AW dFR normality rejection p-val: ',num2str(p)])
+        
+        [aw_rho,aw_p_rho] = corr(AW_offT_nonan, AW_dFR_nonan, 'Type', corr_type);
+        aw_asterisks = get_asterisks_from_pval(aw_p_rho);
+        aw_lincoeff = polyfit(AW_offT_nonan, AW_dFR_nonan, 1);
+        pred_aw_dfr = polyval(aw_lincoeff,AW_offT_nonan);
+
+        aw_residuals = AW_dFR_nonan - pred_aw_dfr;
+        x = (aw_residuals-nanmean(aw_residuals))/nanstd(aw_residuals);
+        [h,p] = kstest(x);
+        figure;hist(x,100);title('z-score dFR AW residuals histogram')
+        disp(['AW dFR normality rejection p-val: ',num2str(p)])
+
+        %% plotting
+        markersize = 4;
+        mylims = 1;
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .3 .8]);
+        subplot(2,1,1);
+    %     if dep
+        scatter(AW_offT_nonan,AW_dFR_nonan,markersize^2,c_aw,'s','filled');
+    %     else
+    %         scatter(AW_offT_nonan,AW_zFR_nonan,markersize^2,c_aw,'s');
+    %     end
+        hold on;
+        if mylims
+            xlims = [-500 14000];
+            ylims = [-200 600];
+            xl2 = [-250 10000];
+            if strcmp(loadFieldname,'ContCell')
+                yl2 = [-20 100];
+            else
+                yl2 = [-20 100];
+            end
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):10:xlims(end);
+        Y = aw_lincoeff(2) + aw_lincoeff(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+        set(gca,'xlim',xlims,'ylim',ylims);
+        ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+        title('Ext. Wake change in FR during AW - scatter','fontsize',18);
+        
+        subplot(2,1,2);
+        mfc = c_aw;
+        errorbar(group_means_offT,group_means,group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+        hold on;
+        box off
+        plot(X,Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',aw_rho,aw_p_rho),'fontsize',16);
+        end
+        ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+        xlabel('Time from start of extended wake (s)','fontsize',20);
+        
+
+
+        %% QW
+        QW_all_data = [QW_dFR_nonan QW_offT_nonan];
+        QW_all_data_sort = sortrows(QW_all_data,2);
+        
+        % ngroups = 5;
+        QW_group_split = round(linspace(0,numel(QW_offT_nonan),ngroups+1));
+        for uu = 1:ngroups
+            QW_this_group = QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 1);
+            QW_group_means(uu) = nanmean(QW_this_group);
+            QW_group_sem(uu) = std(QW_this_group,0,'omitnan') / sqrt(numel(QW_this_group)-1);
+            QW_group_means_offT(uu) = nanmean(QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 2));
+        end
+
+        x = (QW_dFR_nonan-nanmean(QW_dFR_nonan))/nanstd(QW_dFR_nonan);
+        [h,p] = kstest(x);
+        disp(['QW dFR normality rejection p-val: ',num2str(p)])
+
+        [qw_rho,qw_p_rho] = corr(QW_offT_nonan, QW_dFR_nonan, 'Type', corr_type);
+        qw_asterisks = get_asterisks_from_pval(qw_p_rho);
+        qw_lincoeff = polyfit(QW_offT_nonan, QW_dFR_nonan, 1);
+        
+        disp('correlation:')
+        disp(['r-values  --  AW=',num2str(aw_rho),'  QW=',num2str(qw_rho)])
+        disp(['p-values  --  AW=',num2str(aw_p_rho),'  QW=',num2str(qw_p_rho)])
+
+        %% plotting
+        markersize = 4;
+        mylims = 1;
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .3 .8]);
+        subplot(2,1,1);
+        scatter(QW_offT_nonan,QW_dFR_nonan,markersize^2,c_qw,'s','filled');
+
+        hold on;
+        if mylims
+            xlims = [-500 14000];
+            ylims = [-200 600];
+            xl2 = [-250 10000];
+%             yl2 = [-0 100];
+            if strcmp(loadFieldname,'ContCell')
+                yl2 = [-20 100];
+            else
+                yl2 = [-20 100];
+            end
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):10:xlims(end);
+        Y = qw_lincoeff(2) + qw_lincoeff(1).*X;
+        plot(X,Y,'--k','linewidth',1.5);
+        set(gca,'xlim',xlims,'ylim',ylims);
+        ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+        title('Ext. Wake change in FR during QW - scatter','fontsize',18);
+    
+    %     if dep
+            mfc = c_qw;
+    %     else
+    %         mfc = 'none';
+    %     end
+        subplot(2,1,2);
+        errorbar(QW_group_means_offT,QW_group_means,QW_group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'color',c_qw,'linewidth',1.5);
+        hold on;
+        box off;
+        plot(X,Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',qw_rho,qw_p_rho),'fontsize',16);
+        end
+        ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+        xlabel('Time from start of extended wake (s)','fontsize',20);
+
+
+        %% change by BL FR
+        %% AW
+
+        all_data = [AW_dFR_nonan AW_BL_FR_nonan];
+        all_data_sort = sortrows(all_data,2);
+        
+        ngroups = 10;
+        group_split = round(linspace(0,numel(AW_BL_FR_nonan),ngroups+1));
+        for uu = 1:ngroups
+            this_group = all_data_sort(group_split(uu)+1 : group_split(uu+1), 1);
+            group_means(uu) = nanmean(this_group);
+            group_sem(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+            group_means_offT(uu) = nanmean(all_data_sort(group_split(uu)+1 : group_split(uu+1), 2));
+        end
+        
+        [aw_rho,aw_p_rho] = corr(AW_dFR_nonan, AW_BL_FR_nonan, 'Type', corr_type);
+        aw_asterisks = get_asterisks_from_pval(aw_p_rho);
+        aw_lincoeff = polyfit(AW_BL_FR_nonan, AW_dFR_nonan, 1);
+
+        %% plotting
+        markersize = 4;
+        mylims = 1;
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .3 .8]);
+        subplot(2,1,1);
+        scatter(AW_BL_FR_nonan,AW_dFR_nonan,markersize^2,c_aw,'s','filled');
+
+        hold on;
+        if mylims
+            xlims = [-0 10];
+            xl2 = [-0 8];
+            ylims = [-200 600];
+            yl2 = [-0 100];           
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):10:xlims(end);
+        Y = aw_lincoeff(2) + aw_lincoeff(1).*X;
+        plot(X+(min(AW_BL_FR_nonan)),Y,'--k','linewidth',1.5);
+%             set(gca,'XScale','log')
+        set(gca,'xlim',xlims,'ylim',ylims);
+        ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+        title('Ext. Wake change in FR during AW by BL - scatter','fontsize',18);
+        
+        subplot(2,1,2);
+        mfc = c_aw;
+        errorbar(group_means_offT,group_means,group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_aw);
+        hold on;
+        box off
+%             set(gca,'XScale','log')
+
+        plot(X+(min(group_means_offT)),Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',aw_rho,aw_p_rho),'fontsize',16);
+        end
+        ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+        xlabel('Baseline cell FR (Hz)','fontsize',20);            
+
+
+        %% QW
+        QW_all_data = [QW_dFR_nonan QW_BL_FR_nonan];
+        QW_all_data_sort = sortrows(QW_all_data,2);
+        
+        % ngroups = 5;
+        QW_group_split = round(linspace(0,numel(QW_BL_FR_nonan),ngroups+1));
+        for uu = 1:ngroups
+            QW_this_group = QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 1);
+            QW_group_means(uu) = nanmean(QW_this_group);
+            QW_group_sem(uu) = std(QW_this_group,0,'omitnan') / sqrt(numel(QW_this_group)-1);
+            QW_group_means_offT(uu) = nanmean(QW_all_data_sort(QW_group_split(uu)+1 : QW_group_split(uu+1), 2));
+        end
+
+        [qw_rho,qw_p_rho] = corr(QW_BL_FR_nonan, QW_dFR_nonan, 'Type', corr_type);
+        qw_asterisks = get_asterisks_from_pval(qw_p_rho);
+        qw_lincoeff = polyfit(QW_BL_FR_nonan, QW_dFR_nonan, 1);
+        
+        %% plotting
+        markersize = 4;
+        mylims = 1;
+        
+        setFigureDefaults;
+        figure();
+        set(gcf,'position',[.2 .1 .3 .8]);
+        subplot(2,1,1);
+        scatter(QW_BL_FR_nonan,QW_dFR_nonan,markersize^2,c_qw,'s','filled');
+
+        hold on;
+        if mylims
+            xlims = [-0 10];
+            xl2 = [-0 8];
+            ylims = [-200 600];
+            yl2 = [-0 100];
+            
+        else
+            xlims = get(gca,'xlim');
+            ylims = get(gca,'ylim');
+            xl2 = get(gca,'xlim');
+            yl2 = get(gca,'ylim');
+        end
+        X = xlims(1):10:xlims(end);
+        Y = qw_lincoeff(2) + qw_lincoeff(1).*X;
+        plot(X+(min(QW_BL_FR_nonan)),Y,'--k','linewidth',1.5);
+        set(gca,'xlim',xlims,'ylim',ylims);
+%             set(gca,'XScale','log')
+        ylabel({'Firing rate change (% change from first QW epoch)'},'fontsize',16);
+        title('Ext. Wake change in FR during QW by BL - scatter','fontsize',18);
+    
+        mfc = c_qw;
+        subplot(2,1,2);
+        errorbar(QW_group_means_offT,QW_group_means,QW_group_sem,'s','capsize',12,'markersize',8,...
+            'linestyle','none','markerfacecolor',mfc,'color',c_qw,'linewidth',1.5);
+%             set(gca,'XScale','log')
+        hold on;
+        box off;
+        plot(X+(min(QW_group_means_offT)),Y,'--k','linewidth',1.5);
+        if mylims
+            set(gca,'xlim',xl2,'ylim',yl2);
+            text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',qw_rho,qw_p_rho),'fontsize',16);
+        end
+        ylabel({'Firing rate change (% change from first QW epoch)'},'fontsize',16);
+        xlabel('Baseline cell FR (Hz)','fontsize',20);            
+
+
+
+        %% BAR GRAPHS
+        mylims = 1;
+        [~,p_aw] = ttest(AW_delta_nonan);
+        [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+        [~,p_qw] = ttest(QW_delta_nonan);
+        [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+        
+        dfig = figure();
+        set(dfig,'position',[.1 .2 .25 .4]);
+        box off
+        hold on;
+        bw = .3;
+        csz = 20;
+        mfc1 = c_aw;
+        mfc2 = c_qw;
+        ec1 = 'none';
+        ec2 = 'none';
+
+        aw_bar = bar(1,AW_mean,bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+        aw_err = errorbar(1,AW_mean,AW_sem,'linestyle','none','capsize',csz,...
+            'color',c_aw,'linewidth',2);
+        qw_bar = bar(2,QW_mean,bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+        qw_err = errorbar(2,QW_mean,QW_sem,'linestyle','none','capsize',csz,...
+            'color',c_qw,'linewidth',2);
+        if mylims
+            xl = [.5 2.5];
+            yl = [-20 60];
+            yt = [-20:20:60];
+        else
+            xl = get(gca,'xlim');
+            yl = get(gca,'ylim');
+            yt = get(gca,'ytick');
+        end
+        text(.75,50,sprintf('p = %.4f',p_aw),'fontsize',16);
+        text(1.75,50,sprintf('p = %.4f',p_qw),'fontsize',16);
+        set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
+            'ytick',yt);
+        ylabel({'Firing rate change', '(% change from first QW epoch)'},'fontsize',14);
+        title('Ext. Wake delta FR by state','fontsize',18);
+    
+%         ref_l = refline(0,1);
+%         ref_l.LineStyle = '--';
+%         ref_l.LineWidth = 1.5;
+%         ref_l.Color = 'k';
+
+        
+        %% calculate light vs dark circ data bins
+        wake_starts_CIRC_AW = mod(wake_starts_nonan_AW./3600, 24);
+        wake_starts_CIRC_QW = mod(wake_starts_nonan_QW./3600, 24);
+        
+        wake_ends_CIRC_AW = wake_starts_CIRC_AW + wakedur_nonan_AW/3600;
+        wake_ends_CIRC_QW = wake_starts_CIRC_QW + wakedur_nonan_QW/3600;
+
+
+        CIRC_AW_this_group = {};
+        CIRC_QW_this_group = {};
+        CIRC_AW_group_means = [];
+        CIRC_AW_group_sem = [];
+        CIRC_QW_group_means = [];
+        CIRC_QW_group_sem = [];
+        CIRC_group_means_offT = [];
+        
+        CIRC_group_split = 0 : 12 : 24;
+        ngroups = numel(CIRC_group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = CIRC_group_split(uu);
+            g1 = CIRC_group_split(uu+1);
+            CIRC_AW_this_group_idx = find(wake_starts_CIRC_AW >= g0 & wake_ends_CIRC_AW < g1);
+            CIRC_QW_this_group_idx = find(wake_starts_CIRC_QW >= g0 & wake_ends_CIRC_QW < g1);
+            CIRC_AW_this_group{uu} = AW_delta_nonan(CIRC_AW_this_group_idx);
+            CIRC_QW_this_group{uu}= QW_delta_nonan(CIRC_QW_this_group_idx);
+            CIRC_AW_group_means(uu) = nanmean(CIRC_AW_this_group{uu});
+            CIRC_AW_group_sem(uu) = std(CIRC_AW_this_group{uu},0,'omitnan') / sqrt(numel(CIRC_AW_this_group{uu})-1);
+            CIRC_QW_group_means(uu) = nanmean(CIRC_QW_this_group{uu});
+            CIRC_QW_group_sem(uu) = std(CIRC_QW_this_group{uu},0,'omitnan') / sqrt(numel(CIRC_QW_this_group{uu})-1);
+            CIRC_group_means_offT(uu) = mean([g0,g1]);
+        end
+    
+        %% Fig 5H - plotting the first-last change - Light vs dark
+        mylims = 1;
+        
+        for per_num = 1:length(CIRC_group_split)-1
+            %light group == 1
+    %         per_num = 1;
+        
+            [~,p_aw] = ttest(CIRC_AW_this_group{per_num});
+            [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            [~,p_qw] = ttest(CIRC_QW_this_group{per_num});
+            [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            
+            dfig = figure();
+            set(dfig,'position',[.1 .2 .25 .4]);
+            box off
+            hold on;
+            bw = .3;
+            csz = 20;
+            mfc1 = c_aw;
+            mfc2 = c_qw;
+            ec1 = 'none';
+            ec2 = 'none';
+        
+            aw_bar = bar(1,CIRC_AW_group_means(per_num),bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(1,CIRC_AW_group_means(per_num),CIRC_AW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(2,CIRC_QW_group_means(per_num),bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(2,CIRC_QW_group_means(per_num),CIRC_QW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+            if mylims
+                xl = [.5 2.5];
+                yl = [-50 100];
+                yt = [-50:30:100];
+            else
+                xlims = get(gca,'xlim');
+                ylims = get(gca,'ylim');
+                xl2 = get(gca,'xlim');
+                yl2 = get(gca,'ylim');
+            end
+            text(.75,50,sprintf('p = %.4f',p_aw),'fontsize',16);
+            text(1.75,50,sprintf('p = %.4f',p_qw),'fontsize',16);
+            set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
+                'ytick',yt);
+            ylabel({'Firing rate change (% change from first QW epoch)'},'fontsize',16);
+%             ref_l = refline(0,1);
+%             ref_l.LineStyle = '--';
+%             ref_l.LineWidth = 1.5;
+%             ref_l.Color = 'k';        
+            if per_num == 1
+                title({['Ext. Wake delta FR by state'],...
+                    ['- Light Period']},'fontsize',16);
+            else
+                title({['Ext. Wake delta FR by state'],...
+                    ['- Dark Period']},'fontsize',16);
+            end
+        end
+    
+    
+    
+        %% delta changes vs. binned time post hunt
+    
+        wake_starts_AW = wake_starts_nonan_AW./3600;
+        wake_starts_QW = wake_starts_nonan_QW./3600;
+        
+        wake_ends_AW = wake_starts_AW + wakedur_nonan_AW/3600;
+        wake_ends_QW = wake_starts_QW + wakedur_nonan_QW/3600;
+    
+        %% calculate data bins
+        AW_this_group = {};
+        QW_this_group = {};
+        AW_group_means = [];
+        AW_group_sem = [];
+        QW_group_means = [];
+        QW_group_sem = [];
+        group_means_offT = [];
+        
+        group_hrs = 24;
+        group_split = post_hunt_hr : group_hrs : 6.5*24;
+        ngroups = numel(group_split)-1;
+        for uu = 1:ngroups
+            
+            g0 = group_split(uu);
+            g1 = group_split(uu+1);
+            AW_this_group_idx = find(wake_starts_AW >= g0 & wake_ends_AW < g1);
+            QW_this_group_idx = find(wake_starts_QW >= g0 & wake_ends_QW < g1);
+            AW_this_group{uu} = AW_delta_nonan(AW_this_group_idx);
+            QW_this_group{uu}= QW_delta_nonan(QW_this_group_idx);
+            AW_group_means(uu) = nanmean(AW_this_group{uu});
+            AW_group_sem(uu) = std(AW_this_group{uu},0,'omitnan') / sqrt(numel(AW_this_group{uu})-1);
+            QW_group_means(uu) = nanmean(QW_this_group{uu});
+            QW_group_sem(uu) = std(QW_this_group{uu},0,'omitnan') / sqrt(numel(QW_this_group{uu})-1);
+            group_means_offT(uu) = mean([g0,g1]);
+        end
+    
+        dfig = figure();
+        set(dfig,'position',[0.1021 0.2778 0.3521 0.3241]);
+        box off
+        hold on;
+        bw = .3;
+        csz = 20;
+        mfc1 = c_aw;
+        mfc2 = c_qw;
+        ec1 = 'none';
+        ec2 = 'none';    
+        mylims = 0;
+        for per_num = 1:length(group_split)-1
+
+            
+            if ~isempty(AW_this_group{per_num})
+                [~,p_aw] = ttest(AW_this_group{per_num});
+%                 [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
+            else
+                p_aw = 'nan';
+            end
+            if ~isempty(QW_this_group{per_num})
+                [~,p_qw] = ttest(QW_this_group{per_num});
+%                 [a_qw,fsz_qw] = get_asterisks_from_pval(p_qw);
+            else
+                p_qw = 'nan';
+            end
+            
+            bar_x1 = (per_num-1)*2 + 1;
+            bar_x2 = (per_num-1)*2 + 2;
+    
+            aw_bar = bar(bar_x1,AW_group_means(per_num),bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
+            aw_err = errorbar(bar_x1,AW_group_means(per_num),AW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_aw,'linewidth',2);
+            qw_bar = bar(bar_x2,QW_group_means(per_num),bw,'edgecolor',ec2,'facecolor',mfc2,'linewidth',2);
+            qw_err = errorbar(bar_x2,QW_group_means(per_num),QW_group_sem(per_num),'linestyle','none','capsize',csz,...
+                'color',c_qw,'linewidth',2);
+    
+            text(bar_x1,60,sprintf('p = %.4f',p_aw),'fontsize',10,'Rotation',45);
+            text(bar_x2,60,sprintf('p = %.4f',p_qw),'fontsize',10,'Rotation',45);
+            ylabel({'Firing rate change','(% change from first QW epoch)'},'fontsize',14);
+    
+    %         if per_num == 1
+    %             title({['Ext. Wake delta FR by state'],...
+    %                 ['- Light Period']},'fontsize',16);
+    %         else
+    %             title({['Ext. Wake delta FR by state'],...
+    %                 ['- Dark Period']},'fontsize',16);
+    %         end
+        end
+    
+        post_hunt_hrs = group_split+group_hrs/2 - post_hunt_hr;
+        set(gca,'xtick',1.5:2:length(group_split)*2,'xticklabel',post_hunt_hrs)
+        xlabel('Hours post hunt')
+        ylim([-20 75])
+
+%         ref_l = refline(0,1);
+%         ref_l.LineStyle = '--';
+%         ref_l.LineWidth = 1.5;
+%         ref_l.Color = 'k';             
+        title('FR change by state post hunt')
+    
+
+
+        %%
+end
+
+
+%% END
+n_wake_periods = length(unique(wakedur_nonan_QW));
+n_QW_deltas = sum(delta_nonans_QW);
+n_AW_deltas = sum(delta_nonans_AW);
+n_corr_pts_QW = length(QW_dFR_nonan);
+n_corr_pts_AW = length(AW_dFR_nonan);
+
+disp(['n = ',num2str(n_wake_periods),' episodes'])
+disp(['n = ',num2str(n_QW_deltas),' QW deltas, ',num2str(n_AW_deltas),' AW deltas'])
+disp(['n = ',num2str(n_corr_pts_QW),' QW points, ',num2str(n_corr_pts_AW),' AW points'])
+
+
+
+
+keyboard;
+close all
+
+%save workspace?
+clear MASTER
+clear loadFile
+clear all_sp_times add_sps BL_sp_times cell_sp_times anim_cells rsu spikes rate_onoff
+save(savedata_path)
