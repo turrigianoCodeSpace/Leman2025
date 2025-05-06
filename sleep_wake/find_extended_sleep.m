@@ -2,7 +2,7 @@ function [ext_sleep_idx] = find_extended_sleep(st,dur_thresh,short_thresh)
 %
 % find_extended_sleep
 %
-% Alejandro Torrado Pacheco - 2018
+% Alejandro Torrado Pacheco - 2018 Edited by Brian Cary 
 %
 % This function goes through a set of statetimes and finds extended sleep
 % periods based on the parameters passed in as arguments.

@@ -2,7 +2,7 @@ function [ext_wake_idx] = find_extended_wake(st,dur_thresh,short_thresh)
 %
 % find_extended_wake
 %
-% Alejandro Torrado Pacheco - 2018
+% Alejandro Torrado Pacheco - 2018 Edited by Brian Cary 
 %
 % See also: find_extended_sleep.m
 %

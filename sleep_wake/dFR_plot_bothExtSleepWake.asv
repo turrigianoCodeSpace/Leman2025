@@ -17,26 +17,14 @@ sp_filepath = split(hunt_path,'\');
 sp_path2 = split(sp_filepath(end),'.mat');
 savedata_dir = [fileparts(mfilePath), '\stored_data'];
 savename = [char(sp_path2{1}),'_extwake_WS.mat'];
-hunt_wake_path = [savedata_dir,filesep,savename];
+wake_path = [savedata_dir,filesep,savename];
 
-savename = [char(sp_path2{1}),'_extsleep_WS.mat'];
-hunt_sleep_path = [savedata_dir,filesep,savename];
-
-cont_path = "Z:\DPL\PROJECTS\StateCoding\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl.mat";
-sp_filepath = split(cont_path,'\');
-sp_path2 = split(sp_filepath(end),'.mat');
-savedata_dir = [fileparts(mfilePath), '\stored_data'];
-savename = [char(sp_path2{1}),'_extwake_WS.mat'];
-cont_wake_path = [savedata_dir,filesep,savename];
-
-savename = [char(sp_path2{1}),'_extsleep_WS.mat'];
-cont_sleep_path = [savedata_dir,filesep,savename];
 
 % RSU meant6
-cont_wake_ws = load(cont_wake_path);
-cont_sleep_ws = load(cont_sleep_path);
-hunt_wake_ws = load(hunt_wake_path);
-hunt_sleep_ws = load(hunt_sleep_path);
+cont_wake_ws = load("Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\extwakesleep\ContCell_MasterStrct_v3_DL78pred_extwake_WS_meant6.mat");
+cont_sleep_ws = load("Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\extwakesleep\ContCell_MasterStrct_v3_DL78pred_extsleep_WS_meant6.mat");
+hunt_wake_ws = load("Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\extwakesleep\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl_extwake_WS_meant6.mat");
+hunt_sleep_ws = load("Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\extwakesleep\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl_extsleep_WS_meant6.mat");
 
 
 rsu = 1;

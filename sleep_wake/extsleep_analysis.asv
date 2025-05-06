@@ -1238,6 +1238,7 @@ switch mean_t
         figure();
         set(gcf,'position',[.2 .1 .5 .75]);
         subplot(2,1,1);
+    %     if dep
         scatter(sleep_starts_CIRC_REM,REM_delta_nonan,markersize^2,c_rem,'filled');
 
         hold on;
@@ -1262,7 +1263,11 @@ switch mean_t
         title('Ext. Sleep deltaFr REM by ZT','fontsize',18);
         
         subplot(2,1,2);
+    %     if dep
         mfc = c_rem;
+    %     else
+    %         mfc = 'none';
+    %     end
         errorbar(CIRC_group_means_offT,CIRC_REM_group_means,CIRC_REM_group_sem,'o','capsize',12,'markersize',8,...
             'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_rem);
         hold on;
@@ -1284,12 +1289,16 @@ switch mean_t
         markersize = 7;
         mylims = 1;
         
+        
         setFigureDefaults;
         figure();
         set(gcf,'position',[.2 .1 .25 .8]);
         subplot(2,1,1);
+    %     if dep
         scatter(sleep_starts_CIRC,sleepdur_nonan,markersize^2,c_nrem,'filled');
-
+    %     else
+    %         scatter(sleep_starts_CIRC,sleepdur_nonan,markersize^2,c_nrem);
+    %     end
         hold on;
         if mylims
             xlims = [-1 25];
@@ -1313,6 +1322,7 @@ switch mean_t
     
     
         %% delta changes vs. binned time post hunt
+    
         sleep_starts_REM = sleep_starts_nonan_REM./3600;
         sleep_starts_NREM = sleep_starts_nonan_NREM./3600;
         
@@ -1358,7 +1368,9 @@ switch mean_t
         ec2 = 'none';    
         mylims = 0;
         for per_num = 1:length(group_split)-1
-
+            %light group == 1
+    %         per_num = 1;
+            
             if ~isempty(REM_this_group{per_num})
                 [~,p_rem] = ttest(REM_this_group{per_num});
     %             [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
@@ -1386,6 +1398,13 @@ switch mean_t
             text(bar_x2,0.05,sprintf('p = %.4f',p_nrem),'fontsize',12,'rotation',45);
             ylabel('Firing rate (z)','fontsize',22);
     
+    %         if per_num == 1
+    %             title({['Ext. sleep delta FR by state'],...
+    %                 ['- Light Period']},'fontsize',16);
+    %         else
+    %             title({['Ext. sleep delta FR by state'],...
+    %                 ['- Dark Period']},'fontsize',16);
+    %         end
         end
     
         post_hunt_hrs = group_split+group_hrs/2 - post_hunt_hr;
@@ -1393,6 +1412,11 @@ switch mean_t
         ylim([-0.2 0.2])
         xlabel('Hours post hunt')
         title('FR change by state post hunt')
+
+
+
+
+
 
     case {3,5}
         %%
@@ -1527,6 +1551,7 @@ switch mean_t
             xlabel('Time from start of extended sleep (s)','fontsize',20);
             
 
+
             %% NREM
             NREM_all_data = [NREM_dFR_nonan NREM_offT_nonan];
             NREM_all_data_sort = sortrows(NREM_all_data,2);
@@ -1574,6 +1599,7 @@ switch mean_t
             title('Ext. Sleep change in FR during NREM - scatter','fontsize',18);
         
             mfc = c_nrem;
+
             subplot(2,1,2);
             errorbar(NREM_group_means_offT,NREM_group_means,NREM_group_sem,'s','capsize',12,'markersize',8,...
                 'linestyle','none','markerfacecolor',mfc,'color',c_nrem,'linewidth',1.5);
@@ -1634,7 +1660,9 @@ switch mean_t
             ref_l.Color = 'k';
 
         else
-            
+    
+            %% if mean_t == 3, plotting is different
+        
             %% Fig - plotting the first-last change
             mylims = 1;
             
@@ -1650,11 +1678,18 @@ switch mean_t
             hold on;
             bw = .3;
             csz = 22;
+        %     if dep
             mfc1 = c_nrem;
             mfc2 = c_rem;
             ec1 = 'none';
             ec2 = 'none';
-
+        %     else
+        %         mfc1 = 'none';
+        %         mfc2 = 'none';
+        %         ec1 = c_nrem;
+        %         ec2 = c_rem;
+        %     end
+            
             % plot the bars
             nr_bar = bar(1,NREM_mean,bw,'edgecolor',ec1,'facecolor',mfc1,'linewidth',2);
             nr_err = errorbar(1,NREM_mean,NREM_sem,'linestyle','none','capsize',csz,...
@@ -1684,7 +1719,9 @@ switch mean_t
             ref_l.Color = 'k';
         
         
+        
             markersize = 5;
+            
             all_data_d = [NREM_delta_nonan sleepdur_nonan];
             all_data_sort_d = sortrows(all_data_d,2);
             
@@ -1698,17 +1735,23 @@ switch mean_t
                 group_max_d(uu) = max(all_data_sort_d(group_split_d(uu)+1 : group_split_d(uu+1), 2));
             end
         
+            
             [rho_d,p_rho_d] = corr(sleepdur_nonan, NREM_delta_nonan, 'Type', corr_type);
         %     asterisks_d = get_asterisks_from_pval(p_rho_d);
             lincoeff_d = polyfit(sleepdur_nonan, NREM_delta_nonan, 1);
             
+            
             mylims = 1;
+            
             setFigureDefaults;
             figure();
             set(gcf,'position',[.1 .1 .6 .7]);
             subplot(2,1,1);
+        %     if dep
             scatter(sleepdur_nonan,NREM_delta_nonan,markersize^2,'k','filled');
-
+        %     else
+        %         scatter(sleepdur_nonan,NREM_delta_nonan,markersize^2,'k');
+        %     end
             hold on;
             if mylims
                 xlims = [-500 7000];
@@ -1729,9 +1772,14 @@ switch mean_t
             ylabel('Fractional change in firing rate','fontsize',21);
             
             subplot(2,1,2);
+        %     if dep
             mfc = 'k';
             mfc2 = [.7 .7 .7];
-
+        %     else
+        %         mfc = 'none';
+        %         mfc2 = 'none';
+        %     end
+            
             hold on;
             errorbar(sleepdur_bycell_nonan,NREM_all_deltaFR,NREM_all_deltaSEM,'o',...
                 'color',[.7 .7 .7],'markerfacecolor',mfc2,'linestyle','none',...
@@ -1743,17 +1791,20 @@ switch mean_t
             plot(X,Y,'--k','linewidth',1.5);
             plot(xlims,[1 1],'m:','linewidth',2);
             set(gca,'ylim',yl2,'xlim',xl2);
-
+            
+            
             ylabel('Fractional change in firing rate','fontsize',21);
             xlabel('Duration of extended sleep (s)','fontsize',20);
             
             sleep_starts_CIRC = mod(sleep_starts_nonan_NREM ./ 3600, 24);
             
-            [rho_c,p_rho_c] = corr(sleep_starts_CIRC, NREM_delta_nonan, 'Type', corr_type);
+             [rho_c,p_rho_c] = corr(sleep_starts_CIRC, NREM_delta_nonan, 'Type', corr_type);
         %     asterisks_d = get_asterisks_from_pval(p_rho_d);
             lincoeff_c = polyfit(sleep_starts_CIRC, NREM_delta_nonan, 1);
             
+            
             mylims = 1;
+            
             setFigureDefaults;
             figure();
             set(gcf,'position',[.1 .1 .6 .7]);
@@ -1787,6 +1838,7 @@ switch mean_t
     
     
         %%% CIRCADIAN ANALYSIS %%%
+    
         sleep_starts_CIRC_REM = mod(sleep_starts_nonan_REM./3600, 24);
         sleep_starts_CIRC_NREM = mod(sleep_starts_nonan_NREM./3600, 24);
         
@@ -1823,7 +1875,9 @@ switch mean_t
         mylims = 1;
         
         for per_num = 1:length(CIRC_group_split)-1
-
+            %light group == 1
+    %         per_num = 1;
+        
             [~,p_rem] = ttest(CIRC_REM_this_group{per_num}-1);
             [a_rem,fsz_rem] = get_asterisks_from_pval(p_rem);
             [~,p_nrem] = ttest(CIRC_NREM_this_group{per_num}-1);
@@ -1877,6 +1931,7 @@ switch mean_t
 
 
         %% delta changes vs. binned time post hunt
+    
         sleep_starts_REM = sleep_starts_nonan_REM./3600;
         sleep_starts_NREM = sleep_starts_nonan_NREM./3600;
         
@@ -1922,7 +1977,9 @@ switch mean_t
         ec2 = 'none';    
         mylims = 0;
         for per_num = 1:length(group_split)-1
-
+            %light group == 1
+    %         per_num = 1;
+            
             if ~isempty(REM_this_group{per_num})
                 [~,p_rem] = ttest(REM_this_group{per_num}-1);
 %                 [a_aw,fsz_aw] = get_asterisks_from_pval(p_aw);
@@ -1950,6 +2007,13 @@ switch mean_t
             text(bar_x2,1.35,sprintf('p = %.4f',p_nrem),'fontsize',10,'Rotation',45);
             ylabel({['Firing rate frac. change'],['(last / first epoch)']},'fontsize',16);
     
+    %         if per_num == 1
+    %             title({['Ext. sleep delta FR by state'],...
+    %                 ['- Light Period']},'fontsize',16);
+    %         else
+    %             title({['Ext. sleep delta FR by state'],...
+    %                 ['- Dark Period']},'fontsize',16);
+    %         end
         end
     
         post_hunt_hrs = group_split+group_hrs/2 - post_hunt_hr;
@@ -1963,6 +2027,23 @@ switch mean_t
         ref_l.Color = 'k';     
         title('FR change by state post hunt')
 
+        if save_delta_data
+            %         delta_data
+            SLEEP_DELTAS.group_value                    = group_means_d;
+            SLEEP_DELTAS.group_times                    = group_means_offT_d;
+            SLEEP_DELTAS.params.G_bin                   = G_bin;
+            SLEEP_DELTAS.params.dur_frac                = dur_frac;
+            SLEEP_DELTAS.params.duration_threshold      = duration_threshold;
+            SLEEP_DELTAS.params.mean_t                  = mean_t;
+            SLEEP_DELTAS.params.ext_sleep_time_thresh   = ext_sleep_time_thresh;
+            
+            
+    %         sf = 'SLEEP_DELTAS_v0.mat';
+    %         sd = 'Z:\ATP_MAIN\CODE\lfp_analysis_beta\Analysis_Data';
+    %         save([sd filesep sf],'SLEEP_DELTAS','-v7.3');
+        end
+
+        %%
     case {6}
 
         
@@ -2009,6 +2090,7 @@ switch mean_t
 % 
 %                 NREM_FR_toadd = NREM_sleep_BL_FR(:,2:end);
 %                 NREM_BL_FR_nonan = [NREM_BL_FR_nonan; NREM_FR_toadd(:)];
+
                 
                 if length(NREM_offT_nonan) ~= length(NREM_dFR_nonan)
                     disp('offT and dFR not same length')
@@ -2084,8 +2166,11 @@ switch mean_t
         figure();
         set(gcf,'position',[.2 .1 .3 .8]);
         subplot(2,1,1);
+    %     if dep
         scatter(REM_offT_nonan,REM_dFR_nonan,markersize^2,c_rem,'s','filled');
-
+    %     else
+    %         scatter(REM_offT_nonan,REM_zFR_nonan,markersize^2,c_rem,'s');
+    %     end
         hold on;
         if mylims
             xlims = [-500 11000];
@@ -2123,6 +2208,7 @@ switch mean_t
         ylabel({'Firing rate change','(% change from first NREM epoch)'},'fontsize',14);
         xlabel('Time from start of extended sleep (s)','fontsize',20);
         
+
 
         %% NREM
         NREM_all_data = [NREM_dFR_nonan NREM_offT_nonan];
@@ -2179,8 +2265,11 @@ switch mean_t
         ylabel({'Firing rate change','(% change from first NREM epoch)'},'fontsize',14);
         title('Ext. Sleep change in FR during NREM - scatter','fontsize',18);
     
-
-        mfc = c_nrem;
+    %     if dep
+            mfc = c_nrem;
+    %     else
+    %         mfc = 'none';
+    %     end
         subplot(2,1,2);
         errorbar(NREM_group_means_offT,NREM_group_means,NREM_group_sem,'s','capsize',12,'markersize',8,...
             'linestyle','none','markerfacecolor',mfc,'color',c_nrem,'linewidth',1.5);
@@ -2193,6 +2282,138 @@ switch mean_t
         end
         ylabel({'Firing rate change','(% change from first NREM epoch)'},'fontsize',14);
         xlabel('Time from start of extended sleep (s)','fontsize',20);
+
+
+%         %% change by BL FR
+%         %% REM
+% 
+%         all_data = [REM_dFR_nonan REM_BL_FR_nonan];
+%         all_data_sort = sortrows(all_data,2);
+%         
+%         ngroups = 10;
+%         group_split = round(linspace(0,numel(REM_BL_FR_nonan),ngroups+1));
+%         for uu = 1:ngroups
+%             this_group = all_data_sort(group_split(uu)+1 : group_split(uu+1), 1);
+%             group_means(uu) = nanmean(this_group);
+%             group_sem(uu) = std(this_group,0,'omitnan') / sqrt(numel(this_group)-1);
+%             group_means_offT(uu) = nanmean(all_data_sort(group_split(uu)+1 : group_split(uu+1), 2));
+%         end
+%         
+%         [rem_rho,rem_p_rho] = corr(REM_dFR_nonan, REM_BL_FR_nonan);
+%         rem_asterisks = get_asterisks_from_pval(rem_p_rho);
+%         rem_lincoeff = polyfit(REM_BL_FR_nonan, REM_dFR_nonan, 1);
+% 
+%         %% plotting
+%         markersize = 4;
+%         mylims = 1;
+%         
+%         setFigureDefaults;
+%         figure();
+%         set(gcf,'position',[.2 .1 .3 .8]);
+%         subplot(2,1,1);
+%         scatter(REM_BL_FR_nonan,REM_dFR_nonan,markersize^2,c_rem,'s','filled');
+% 
+%         hold on;
+%         if mylims
+%             xlims = [-0 10];
+%             xl2 = [-0 8];
+%             ylims = [-200 1000];
+%             yl2 = [-0 80];           
+%         else
+%             xlims = get(gca,'xlim');
+%             ylims = get(gca,'ylim');
+%             xl2 = get(gca,'xlim');
+%             yl2 = get(gca,'ylim');
+%         end
+%         X = xlims(1):10:xlims(end);
+%         Y = rem_lincoeff(2) + rem_lincoeff(1).*X;
+%         plot(X+(min(REM_BL_FR_nonan)),Y,'--k','linewidth',1.5);
+% %             set(gca,'XScale','log')
+%         set(gca,'xlim',xlims,'ylim',ylims);
+%         ylabel({'Firing rate change','(% change from first NREM epoch)'},'fontsize',14);
+%         title('Ext. Sleep change in FR during REM - scatter','fontsize',18);
+%         
+%         subplot(2,1,2);
+%         mfc = c_rem;
+%         errorbar(group_means_offT,group_means,group_sem,'s','capsize',12,'markersize',8,...
+%             'linestyle','none','markerfacecolor',mfc,'linewidth',1.5,'color',c_rem);
+%         hold on;
+%         box off
+% %             set(gca,'XScale','log')
+% 
+%         plot(X+(min(group_means_offT)),Y,'--k','linewidth',1.5);
+%         if mylims
+%             set(gca,'xlim',xl2,'ylim',yl2);
+%             text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',rem_rho,rem_p_rho),'fontsize',16);
+%         end
+%         ylabel({'Firing rate change','(% change from first NREM epoch)'},'fontsize',14);
+%         xlabel('Baseline cell FR (Hz)','fontsize',20);            
+% 
+% 
+%         %% NREM
+%         NREM_all_data = [NREM_dFR_nonan NREM_BL_FR_nonan];
+%         NREM_all_data_sort = sortrows(NREM_all_data,2);
+%         
+%         % ngroups = 5;
+%         NREM_group_split = round(linspace(0,numel(NREM_BL_FR_nonan),ngroups+1));
+%         for uu = 1:ngroups
+%             NREM_this_group = NREM_all_data_sort(NREM_group_split(uu)+1 : NREM_group_split(uu+1), 1);
+%             NREM_group_means(uu) = nanmean(NREM_this_group);
+%             NREM_group_sem(uu) = std(NREM_this_group,0,'omitnan') / sqrt(numel(NREM_this_group)-1);
+%             NREM_group_means_offT(uu) = nanmean(NREM_all_data_sort(NREM_group_split(uu)+1 : NREM_group_split(uu+1), 2));
+%         end
+% 
+%         [nrem_rho,nrem_p_rho] = corr(NREM_BL_FR_nonan, NREM_dFR_nonan);
+%         nrem_asterisks = get_asterisks_from_pval(nrem_p_rho);
+%         nrem_lincoeff = polyfit(NREM_BL_FR_nonan, NREM_dFR_nonan, 1);
+%         
+%         %% plotting
+%         markersize = 4;
+%         mylims = 1;
+%         
+%         setFigureDefaults;
+%         figure();
+%         set(gcf,'position',[.2 .1 .3 .8]);
+%         subplot(2,1,1);
+%         scatter(NREM_BL_FR_nonan,NREM_dFR_nonan,markersize^2,c_nrem,'s','filled');
+% 
+%         hold on;
+%         if mylims
+%             xlims = [-0 10];
+%             xl2 = [-0 8];
+%             ylims = [-200 1000];
+%             yl2 = [-0 80];
+%             
+%         else
+%             xlims = get(gca,'xlim');
+%             ylims = get(gca,'ylim');
+%             xl2 = get(gca,'xlim');
+%             yl2 = get(gca,'ylim');
+%         end
+%         X = xlims(1):10:xlims(end);
+%         Y = nrem_lincoeff(2) + nrem_lincoeff(1).*X;
+%         plot(X+(min(NREM_BL_FR_nonan)),Y,'--k','linewidth',1.5);
+%         set(gca,'xlim',xlims,'ylim',ylims);
+% %             set(gca,'XScale','log')
+%         ylabel({'Firing rate change (% change from first NREM epoch)'},'fontsize',16);
+%         title('Ext. Sleep change in FR during NREM - scatter','fontsize',18);
+%     
+%         mfc = c_nrem;
+%         subplot(2,1,2);
+%         errorbar(NREM_group_means_offT,NREM_group_means,NREM_group_sem,'s','capsize',12,'markersize',8,...
+%             'linestyle','none','markerfacecolor',mfc,'color',c_nrem,'linewidth',1.5);
+% %             set(gca,'XScale','log')
+%         hold on;
+%         box off;
+%         plot(X+(min(NREM_group_means_offT)),Y,'--k','linewidth',1.5);
+%         if mylims
+%             set(gca,'xlim',xl2,'ylim',yl2);
+%             text(xl2(2)*.8,yl2(2)*.9,sprintf('r = %.4f\np = %.4f',nrem_rho,nrem_p_rho),'fontsize',16);
+%         end
+%         ylabel({'Firing rate change (% change from first NREM epoch)'},'fontsize',16);
+%         xlabel('Baseline cell FR (Hz)','fontsize',20);            
+
+
 
         %% BAR GRAPHS
         mylims = 1;
@@ -2234,6 +2455,11 @@ switch mean_t
         ylabel({'Firing rate change', '(% change from first NREM epoch)'},'fontsize',14);
         title('Ext. Sleep delta FR by state','fontsize',18);
     
+%         ref_l = refline(0,1);
+%         ref_l.LineStyle = '--';
+%         ref_l.LineWidth = 1.5;
+%         ref_l.Color = 'k';
+
         
         %% calculate light vs dark circ data bins
         sleep_starts_CIRC_REM = mod(sleep_starts_nonan_REM./3600, 24);
@@ -2272,7 +2498,9 @@ switch mean_t
         mylims = 1;
         
         for per_num = 1:length(CIRC_group_split)-1
-
+            %light group == 1
+    %         per_num = 1;
+        
             [~,p_rem] = ttest(CIRC_REM_this_group{per_num});
             [a_rem,fsz_rem] = get_asterisks_from_pval(p_rem);
             [~,p_nrem] = ttest(CIRC_NREM_this_group{per_num});
@@ -2310,7 +2538,10 @@ switch mean_t
             set(gca,'xlim',xl,'ylim',yl,'xtick',[1 2],'xticklabel',{'Active','Quiet'},...
                 'ytick',yt);
             ylabel({'Firing rate change (% change from first NREM epoch)'},'fontsize',16);
-       
+%             ref_l = refline(0,1);
+%             ref_l.LineStyle = '--';
+%             ref_l.LineWidth = 1.5;
+%             ref_l.Color = 'k';        
             if per_num == 1
                 title({['Ext. Sleep delta FR by state'],...
                     ['- Light Period']},'fontsize',16);
@@ -2398,15 +2629,30 @@ switch mean_t
             text(bar_x2,60,sprintf('p = %.4f',p_nrem),'fontsize',10,'Rotation',45);
             ylabel({'Firing rate change','(% change from first NREM epoch)'},'fontsize',14);
     
+    %         if per_num == 1
+    %             title({['Ext. Sleep delta FR by state'],...
+    %                 ['- Light Period']},'fontsize',16);
+    %         else
+    %             title({['Ext. Sleep delta FR by state'],...
+    %                 ['- Dark Period']},'fontsize',16);
+    %         end
         end
     
         post_hunt_hrs = group_split+group_hrs/2 - post_hunt_hr;
         set(gca,'xtick',1.5:2:length(group_split)*2,'xticklabel',post_hunt_hrs)
         xlabel('Hours post hunt')
         ylim([-20 75])
-         
+
+%         ref_l = refline(0,1);
+%         ref_l.LineStyle = '--';
+%         ref_l.LineWidth = 1.5;
+%         ref_l.Color = 'k';             
         title('FR change by state post hunt')
     
+
+
+        %%
+
 end
 
 %% END
