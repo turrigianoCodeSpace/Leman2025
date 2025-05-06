@@ -15,7 +15,8 @@ end
 cd(fileparts(mfilePath))
 
 % Path to processed data structure including spike times, features, etc.
-filepath = "Z:\DPL\PROJECTS\StateCoding\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl.mat";
+filepath = "Z:\DPL\PROJECTS\StateCoding\Hunt_MasterStrct_StableBase.mat";
+% filepath = "Z:\DPL\PROJECTS\StateCoding\Cont_MasterStrct_StableBase.mat";
 
 sp_filepath = split(filepath,'\');
 sp_path2 = split(sp_filepath(end),'.mat');

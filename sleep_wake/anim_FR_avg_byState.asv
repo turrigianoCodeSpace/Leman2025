@@ -1,20 +1,13 @@
-%
-% Written by Brian Cary
-%
 % go through multi animal cell structure with state data and create animal
 % average FR plots colored by behavioral state
 
 % add extwake to sleep transition avg FR and extsleep to wake 
 
-mfilePath = mfilename('fullpath');
-if isempty(mfilePath)
-    mfilePath = matlab.desktop.editor.getActiveFilename;
-end
-cd(fileparts(mfilePath))
+cd('Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode')
 
-% Path to processed data structure including spike times, features, etc.
-filepath = "Z:\DPL\PROJECTS\StateCoding\Hunt_MasterStrct_StableBase.mat";
-% filepath = "Z:\DPL\PROJECTS\StateCoding\Cont_MasterStrct_StableBase.mat";
+filepath = "\\files.brandeis.edu\turrigiano-lab\DPL\PROJECTS\StateCoding\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl.mat";
+filepath = "Z:\DPL\PROJECTS\StateCoding\MasterStrct_StableBase_Hr66_withStates_v8_BL71incl.mat";
+
 
 loadFile = load(filepath);
 
@@ -34,8 +27,8 @@ n_anims = numel(anim_fields); % minus daystart field
 cell_anims = {MASTER.animal};
 
 %% initialize vars
-PLOT_EACH_CELL = 0;
-PLOT_EACH_ANIM = 1;
+PLOT_EACH_CELL = 1;
+PLOT_EACH_ANIM = 0;
 
 setFigureDefaults
 
