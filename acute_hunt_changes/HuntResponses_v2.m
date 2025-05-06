@@ -2,17 +2,19 @@
 % This script requires: Cell Cluster Structure, behavioral segment
 % matrices in the cell structure
 
+% Written by Brian Cary
 
 % cochrans Q test source:
 % Jos (10584) (2024). COCHRAN Q TEST (https://www.mathworks.com/matlabcentral/fileexchange/16753-cochran-q-test), MATLAB Central File Exchange. Retrieved December 16, 2024. 
 
 
-% filepath = "Z:\DPL\PROJECTS\StateCoding\MasterStrct_StableBase_Hr66_withStates_v4_DL44predlab.mat";
-addpath(genpath('\\files.brandeis.edu\turrigiano-lab\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode'))
-addpath(genpath('Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode'))
+mfilePath = mfilename('fullpath');
+if isempty(mfilePath)
+    mfilePath = matlab.desktop.editor.getActiveFilename;
+end
+cd(fileparts(mfilePath))
 
-filepath = "Z:\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\HuntCell_MasterStrct_v2.mat";
-filepath = "\\files.brandeis.edu\turrigiano-lab\BrianCary\CODE\Dan_SW_FR_analysis\Dan_version_ofAlejCode\stored_data\HuntCell_MasterStrct_v2.mat";
+filepath = "path/to/huntstructure";
 
 load(filepath);
 
@@ -21,7 +23,6 @@ set(0,'defaultFigureUnit','pixels');
 set(0,'defaultFigurePosition',[28 530 754 347]);
 
 MASTER = HuntCell.MASTER;
-% MASTER = StableBase_Hr66.MASTER;
 
 STATES = HuntCell.STATES;
 DAYSTART = STATES.DAYSTART;
@@ -332,15 +333,7 @@ for anim_i = 1:n_anims
                 anim_behFrs{beh_seg}(cell_i,:) = [100*nanmean((Pur_FRs - ICI_FRs)./ICI_FRs),...
                                                   100*nanmean((Cons_FRs - ICI_FRs)./ICI_FRs)];
 
-%                 % normalizing the averages to one another
-%                 anim_behFrs{beh_seg}(cell_i,:) = [100*(nanmean(Pur_FRs) - nanmean(ICI_FRs))./nanmean(ICI_FRs),...
-%                                                   100*(nanmean(Cons_FRs) - nanmean(ICI_FRs))./nanmean(ICI_FRs)];
             end
-
-%             if (isnan(anim_behFrs{beh_seg}(cell_i,1)) || (nanmean(Pur_FRs./ICI_FRs) == 0))...
-%                     && nanmean(ICI_FRs) > 0
-%                 keyboard                
-%             end
 
             %% Plotting lines
             if Fig_ON_Lines == 1
