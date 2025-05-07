@@ -147,7 +147,7 @@ if type == 2 && hs <= 4
             max_mf = max([m_max,f_max]);
 
             ylim([0 80])
-            legend('Females', 'Male')
+            legend('FEMALES', 'MALES')
             title('Average Time to Capture on First Day of Hunting')
             legend boxoff
             set(gca,'box','off')
