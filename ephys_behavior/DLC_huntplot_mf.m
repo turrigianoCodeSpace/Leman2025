@@ -43,7 +43,7 @@ if type == 1
     set(gca,'TickDir','out')
 
     %Calculate Stats
-    wrs_d1 = ranksum(reshape(m_mat(:,1:3),[1 numel(m_mat(:,1:3))]),reshape(f_mat(:,1:3),[1 numel(f_mat(:,1:3))]))
+    wrs_d1 = ranksum(md1,fd1)
 
 end
 
