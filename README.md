@@ -1,5 +1,5 @@
 # Leman2025
-Code used in Leman et al., 2025
+Code used in Leman et al., 2025: https://www.biorxiv.org/content/10.1101/2025.04.11.648036v1.full
 
 INSTALLATION:
 Code provided here has been tested and validated using MATLAB (MathWorks) 2024B.
