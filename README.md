@@ -17,3 +17,5 @@ Figure 6: slice (in progress)\
 Figure 7: spines, xpro (in progress)
 
 In certain subdirectories, there is a folder containing sample data to run along with code provided. Code should be run in a pwd containing the pipeline file, subfunctions, and sample data. 
+
+Please direct questions to Dan Leman (dpleman@brandeis.edu) or Brian Cary (bcary@brandeis.edu).
