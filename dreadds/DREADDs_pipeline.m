@@ -25,7 +25,7 @@ crem = struct2cell(crem_times);
 %% Compare Conditions and Generate Figures
 
 cd(dr_code_dir)
-type = 2; % use 1 for day averages, use 2 for session averages
+type = 1; % use 1 for day averages (Fig 1, use 2 for session averages
 exp = 1; % 1 = time to capture, 2 = latency to attack, 3 = pursuit duration
 hs = 4; % use 0 if for no plotting, or 1-3 for those sessions alone, or 4 for all
 sess = 3; % use 3 for single day, 3 hunting session experiments
