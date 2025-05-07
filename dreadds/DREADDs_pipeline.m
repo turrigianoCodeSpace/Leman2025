@@ -5,7 +5,7 @@
 
 dr_code_dir = pwd; % run pipeline in DREADDs directory containing code and the folder "animal_data"
 % uigetdir(); % Choose directory containing DREADDs code
-addpath(genpath(DR_code_dir))
+addpath(genpath(dr_code_dir))
 
 %% Cre+
 
