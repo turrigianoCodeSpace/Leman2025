@@ -1,4 +1,4 @@
-function DLC_huntplot(m_mat, f_mat, type, exp, hs)
+function DLC_huntplot_mf(m_mat, f_mat, type, exp, hs)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %Type inputs are either: 1 (pool by day) or 2 (pool by hunting session)
 %Exp inputs are either: 1 (time to capture), 2 (latency to attack) or 3 (pursuit
