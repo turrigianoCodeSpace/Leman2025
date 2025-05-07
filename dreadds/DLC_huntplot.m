@@ -11,16 +11,16 @@ function DLC_huntplot(ctl_mat, dr_mat, type, exp, hs)
 %% Compare conditions across day
 
 if type == 1
-    ctld1 = mean(ctl_mat(1:3),'all');
-    drd1 = mean(dr_mat(1:3),'all');
+    ctld1 = mean(ctl_mat(:,1:3),'all');
+    drd1 = mean(dr_mat(:,1:3),'all');
 
 
     figure
     bar(0.25,mean(ctld1),0.4,'FaceColor', [0.7 0.7 0.7])
     hold on,
     bar(0.75,mean(drd1),0.4,'FaceColor', '#FF6347')
-    plot(0.15*ones(1,length(ctld1)), ctld1,'kx','LineWidth',4);
-    plot(0.65*ones(1,length(drd1)), drd1,'kx','LineWidth',4);
+    plot(0.15*ones(1,length(ctld1)), ctl_mat(1:3),'kx','LineWidth',4);
+    plot(0.65*ones(1,length(drd1)), dr_mat(1:3),'kx','LineWidth',4);
     errorbar(0.25,mean(ctld1), std(ctld1)/sqrt(numel(ctld1)), 'k', 'LineWidth',4)
     errorbar(0.75,mean(drd1), std(drd1)/sqrt(numel(drd1)), 'k', 'LineWidth',4)
 
@@ -43,7 +43,7 @@ if type == 1
     set(gca,'TickDir','out')
 
     %Calculate Stats
-    wrs_d1 = ranksum(ctld1,drd1)
+    wrs_d1 = ranksum(reshape(ctl_mat(:,1:3),[1 numel(ctl_mat(:,1:3))]),reshape(dr_mat(:,1:3),[1 numel(dr_mat(:,1:3))]))
 
 end
 
@@ -52,7 +52,7 @@ if type == 2 && hs <= 4
 
     %% Compare individual sessions
     if hs >0 && hs <=4
-        if hs > 4
+        if hs < 4
             i = hs;
 
             ctlhs = ctl_mat(:,i);
@@ -155,9 +155,9 @@ if type == 2 && hs <= 4
     end
     
     if exp == 1
-        ylabel('Stats for Time to Capture')
+        disp('Stats for Time to Capture')
     elseif exp == 2
-        ylabel('Stats for Latency to Attack')
+        disp('Stats for Latency to Attack')
     elseif exp == 3
         disp('Stats for Pursuit Duration')
     end

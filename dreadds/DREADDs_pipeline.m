@@ -1,6 +1,10 @@
 %% DREADDs PIPELINE for Leman et al., 2025
+% Pipeline for analyzing behavioral performance of PV-Cre+ and PV-Cre-
+% negative animals as part of Figure 1 in Leman et al., 2025
 
-dr_code_dir = pwd;% uigetdir(); % Choose directory containing DREADDs code
+
+dr_code_dir = pwd; % run pipeline in DREADDs directory containing code and the folder "animal_data"
+% uigetdir(); % Choose directory containing DREADDs code
 addpath(genpath(DR_code_dir))
 
 %% Cre+
@@ -21,10 +25,10 @@ crem = struct2cell(crem_times);
 %% Compare Conditions and Generate Figures
 
 cd(dr_code_dir)
-type = 2;
-exp = 1;
-hs = 4;
-sess = 3;
+type = 2; % use 1 for day averages, use 2 for session averages
+exp = 1; % 1 = time to capture, 2 = latency to attack, 3 = pursuit duration
+hs = 4; % use 0 if for no plotting, or 1-3 for those sessions alone, or 4 for all
+sess = 3; % use 3 for single day, 3 hunting session experiments
 
 if exp == 1
     ctl_mat = ctl_t2c_mat;
